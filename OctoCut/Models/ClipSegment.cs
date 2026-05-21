@@ -87,6 +87,27 @@ public sealed class ClipSegment : INotifyPropertyChanged
         return position > Start && position < End;
     }
 
+    public bool ContainsTimeline(TimeSpan position)
+    {
+        return position >= TimelineStart && position < TimelineEnd;
+    }
+
+    public TimeSpan SourceFromTimeline(TimeSpan position)
+    {
+        var offset = position - TimelineStart;
+        if (offset < TimeSpan.Zero)
+        {
+            offset = TimeSpan.Zero;
+        }
+
+        if (offset > Duration)
+        {
+            offset = Duration;
+        }
+
+        return Start + offset;
+    }
+
     public static string FormatTime(TimeSpan value)
     {
         return value.TotalHours >= 1
