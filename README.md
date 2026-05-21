@@ -1,5 +1,7 @@
 # OctoCut
 
+[![OctoCut preview](docs/images/octocut-preview.jpg)](docs/images/octocut-preview.png)
+
 OctoCut은 .NET 10 WPF 기반의 간이 영상 편집 도구입니다. 하나의 영상을 열고, 타임라인에서 클립을 분할하거나 삭제한 뒤 FFmpeg로 결과물을 렌더링하는 MVP를 목표로 합니다.
 
 ## 구현된 기능
