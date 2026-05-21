@@ -118,15 +118,19 @@
                                   Margin="0,0,8,0"
                                   IsChecked="True"
                                   Click="RippleDeleteToggle_Click"
-                                  ToolTip="리플 삭제: 켜짐이면 삭제한 구간만큼 뒤 클립이 앞으로 당겨집니다.">
-                        <Viewbox Width="17" Height="17">
-                            <Canvas Width="24" Height="24">
+                                  ToolTip="잔물결 삭제: 삭제로 생긴 빈 구간을 뒤 클립이 앞으로 당겨 붙여 메웁니다.">
+                        <Viewbox Width="20" Height="18">
+                            <Canvas Width="28" Height="24">
                                 <Path Stroke="#24292F"
                                       StrokeThickness="2"
                                       StrokeStartLineCap="Round"
                                       StrokeEndLineCap="Round"
-                                      StrokeLineJoin="Round"
-                                      Data="M4,7 L13,7 M9,3 L13,7 L9,11 M20,17 L11,17 M15,13 L11,17 L15,21"/>
+                                      Fill="Transparent"
+                                      Data="M14,3 C10,6 18,9 14,12 C10,15 18,18 14,21"/>
+                                <Path Fill="#0969DA"
+                                      Data="M12,12 L7,7 L7,10 L5,10 L5,14 L7,14 L7,17 Z"/>
+                                <Path Fill="#0969DA"
+                                      Data="M16,12 L21,7 L21,10 L23,10 L23,14 L21,14 L21,17 Z"/>
                             </Canvas>
                         </Viewbox>
                     </ToggleButton>

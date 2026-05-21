@@ -217,8 +217,8 @@ public partial class MainWindow : Window
         RefreshClipTimeline();
         SetCurrentTimelinePosition(_currentTimelinePosition, seekPlayer: true, keepVisible: true);
         StatusText.Text = RippleDeleteToggle.IsChecked == true
-            ? "리플 삭제가 켜졌습니다."
-            : "리플 삭제가 꺼졌습니다.";
+            ? "잔물결 삭제 켜짐: 삭제로 생긴 빈 구간을 뒤 클립이 앞으로 당겨 붙입니다."
+            : "잔물결 삭제 꺼짐: 선택 클립만 삭제합니다.";
     }
 
     private void Window_KeyDown(object sender, KeyEventArgs e)
@@ -385,7 +385,7 @@ public partial class MainWindow : Window
         }
 
         StatusText.Text = RippleDeleteToggle.IsChecked == true
-            ? $"{ClipSegment.FormatTime(removedDuration)} 구간을 리플 삭제했습니다."
+            ? $"{ClipSegment.FormatTime(removedDuration)} 구간을 잔물결 삭제했습니다. 뒤 클립이 빈 구간 없이 앞으로 붙었습니다."
             : "선택한 클립을 삭제했습니다.";
         UpdateCommandState();
     }
