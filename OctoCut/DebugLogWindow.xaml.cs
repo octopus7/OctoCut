@@ -1,12 +1,22 @@
 using System.Windows;
+using OctoCut.Services;
 
 namespace OctoCut;
 
 public partial class DebugLogWindow : Window
 {
-    public DebugLogWindow()
+    private readonly LocalizationManager _localization;
+
+    public DebugLogWindow(LocalizationManager localization)
     {
+        _localization = localization;
         InitializeComponent();
+        ApplyLocalization();
+    }
+
+    public void ApplyLocalization()
+    {
+        Title = _localization.Text("DebugLog.Title");
     }
 
     public void SetLogText(string text)

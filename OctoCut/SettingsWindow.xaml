@@ -3,7 +3,7 @@
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         Title="설정"
         Width="560"
-        Height="180"
+        Height="248"
         MinWidth="520"
         ResizeMode="NoResize"
         WindowStartupLocation="CenterOwner">
@@ -11,16 +11,30 @@
         <Grid.RowDefinitions>
             <RowDefinition Height="Auto"/>
             <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
             <RowDefinition Height="*"/>
             <RowDefinition Height="Auto"/>
         </Grid.RowDefinitions>
 
         <TextBlock Grid.Row="0"
+                   x:Name="LanguageLabel"
+                   FontWeight="SemiBold"
+                   Text="언어"/>
+
+        <ComboBox Grid.Row="1"
+                  x:Name="LanguageBox"
+                  Margin="0,8,0,14"
+                  DisplayMemberPath="NativeName"/>
+
+        <TextBlock Grid.Row="2"
+                   x:Name="FfmpegLabel"
                    FontWeight="SemiBold"
                    Text="FFmpeg 실행 파일"/>
 
-        <DockPanel Grid.Row="1" Margin="0,8,0,0">
+        <DockPanel Grid.Row="3" Margin="0,8,0,0">
             <Button DockPanel.Dock="Right"
+                    x:Name="BrowseButton"
                     Width="80"
                     Margin="8,0,0,0"
                     Content="찾기"
@@ -29,21 +43,24 @@
                      VerticalContentAlignment="Center"/>
         </DockPanel>
 
-        <TextBlock Grid.Row="2"
+        <TextBlock Grid.Row="4"
+                   x:Name="FfmpegHintText"
                    Margin="0,8,0,0"
                    Foreground="#57606A"
                    Text="비워두면 PATH에서 ffmpeg.exe를 자동으로 찾습니다."
                    TextWrapping="Wrap"/>
 
-        <StackPanel Grid.Row="3"
+        <StackPanel Grid.Row="5"
                     Orientation="Horizontal"
                     HorizontalAlignment="Right">
-            <Button Width="84"
+            <Button x:Name="SaveButton"
+                    Width="84"
                     Margin="0,0,8,0"
                     Content="저장"
                     IsDefault="True"
                     Click="Save_Click"/>
-            <Button Width="84"
+            <Button x:Name="CancelButton"
+                    Width="84"
                     Content="취소"
                     IsCancel="True"/>
         </StackPanel>

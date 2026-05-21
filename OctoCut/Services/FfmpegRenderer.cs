@@ -12,12 +12,13 @@ public sealed class FfmpegRenderer
         IReadOnlyList<ClipSegment> clips,
         string outputPath,
         RenderMode mode,
+        RenderProgressText text,
         IProgress<string>? progress,
         CancellationToken cancellationToken)
     {
         if (clips.Count == 0)
         {
-            throw new InvalidOperationException("렌더할 클립이 없습니다.");
+            throw new InvalidOperationException(text.NoClips);
         }
 
         var tempDirectory = Path.Combine(Path.GetTempPath(), "OctoCut", Guid.NewGuid().ToString("N"));
@@ -34,7 +35,7 @@ public sealed class FfmpegRenderer
 
                 var clip = clips[index];
                 var segmentPath = Path.Combine(tempDirectory, $"segment_{index:000}{outputExtension}");
-                progress?.Report($"클립 {index + 1}/{clips.Count} 생성 중...");
+                progress?.Report(string.Format(text.CreatingSegment, index + 1, clips.Count));
 
                 await CreateSegmentAsync(
                     ffmpegPath,
@@ -47,7 +48,7 @@ public sealed class FfmpegRenderer
                 segmentPaths.Add(segmentPath);
             }
 
-            progress?.Report("클립 병합 중...");
+            progress?.Report(text.MergingSegments);
             var listPath = Path.Combine(tempDirectory, "segments.txt");
             await File.WriteAllLinesAsync(
                 listPath,
@@ -67,7 +68,7 @@ public sealed class FfmpegRenderer
                 },
                 cancellationToken);
 
-            progress?.Report("렌더 완료");
+            progress?.Report(text.Complete);
         }
         finally
         {
@@ -195,4 +196,15 @@ public sealed class FfmpegRenderer
             // Temporary render files can be cleaned by the OS later if a process still holds them.
         }
     }
+}
+
+public sealed class RenderProgressText
+{
+    public required string NoClips { get; init; }
+
+    public required string CreatingSegment { get; init; }
+
+    public required string MergingSegments { get; init; }
+
+    public required string Complete { get; init; }
 }

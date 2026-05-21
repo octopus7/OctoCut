@@ -7,20 +7,44 @@ namespace OctoCut;
 
 public partial class SettingsWindow : Window
 {
-    public SettingsWindow(AppSettings settings)
+    private readonly LocalizationManager _localization;
+
+    public SettingsWindow(AppSettings settings, LocalizationManager localization)
     {
+        _localization = localization;
         InitializeComponent();
+
+        ApplyLocalization();
+        LanguageBox.ItemsSource = _localization.AvailableLanguages;
+        LanguageBox.SelectedItem = _localization.AvailableLanguages.FirstOrDefault(language =>
+            string.Equals(language.Code, settings.LanguageCode, StringComparison.OrdinalIgnoreCase)) ??
+            _localization.AvailableLanguages.FirstOrDefault(language =>
+                string.Equals(language.Code, _localization.CurrentLanguageCode, StringComparison.OrdinalIgnoreCase));
+
         FfmpegPathBox.Text = settings.FfmpegPath ?? string.Empty;
     }
 
     public string? FfmpegPath { get; private set; }
 
+    public string? LanguageCode { get; private set; }
+
+    private void ApplyLocalization()
+    {
+        Title = _localization.Text("Settings.Title");
+        LanguageLabel.Text = _localization.Text("Settings.Language");
+        FfmpegLabel.Text = _localization.Text("Settings.FfmpegPath");
+        BrowseButton.Content = _localization.Text("Common.Browse");
+        FfmpegHintText.Text = _localization.Text("Settings.FfmpegHint");
+        SaveButton.Content = _localization.Text("Common.Save");
+        CancelButton.Content = _localization.Text("Common.Cancel");
+    }
+
     private void Browse_Click(object sender, RoutedEventArgs e)
     {
         var dialog = new OpenFileDialog
         {
-            Title = "ffmpeg.exe 선택",
-            Filter = "ffmpeg.exe|ffmpeg.exe|실행 파일|*.exe|모든 파일|*.*",
+            Title = _localization.Text("Dialog.FfmpegBrowse.Title"),
+            Filter = _localization.Text("Dialog.Exe.Filter"),
             FileName = "ffmpeg.exe"
         };
 
@@ -35,11 +59,12 @@ public partial class SettingsWindow : Window
         var path = FfmpegPathBox.Text.Trim();
         if (path.Length > 0 && !File.Exists(path))
         {
-            MessageBox.Show(this, "FFmpeg 실행 파일 경로를 확인하세요.", "OctoCut", MessageBoxButton.OK, MessageBoxImage.Warning);
+            MessageBox.Show(this, _localization.Text("Settings.InvalidFfmpegPath"), "OctoCut", MessageBoxButton.OK, MessageBoxImage.Warning);
             return;
         }
 
         FfmpegPath = path.Length == 0 ? null : path;
+        LanguageCode = (LanguageBox.SelectedItem as LanguageInfo)?.Code ?? _localization.CurrentLanguageCode;
         DialogResult = true;
     }
 }

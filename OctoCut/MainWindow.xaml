@@ -11,17 +11,17 @@
         PreviewKeyDown="Window_PreviewKeyDown">
     <DockPanel>
         <Menu DockPanel.Dock="Top">
-            <MenuItem Header="_File">
-                <MenuItem Header="영상 열기(_O)..." Click="OpenVideo_Click"/>
+            <MenuItem x:Name="FileMenu" Header="_File">
+                <MenuItem x:Name="OpenVideoMenuItem" Header="영상 열기(_O)..." Click="OpenVideo_Click"/>
                 <MenuItem x:Name="SaveFrameMenuItem"
                           Header="현재 프레임 파일로 저장(_F)..."
                           Click="SaveCurrentFrame_Click"/>
                 <Separator/>
-                <MenuItem Header="설정(_S)..." Click="Settings_Click"/>
+                <MenuItem x:Name="SettingsMenuItem" Header="설정(_S)..." Click="Settings_Click"/>
                 <Separator/>
-                <MenuItem Header="끝내기(_X)" Click="Exit_Click"/>
+                <MenuItem x:Name="ExitMenuItem" Header="끝내기(_X)" Click="Exit_Click"/>
             </MenuItem>
-            <MenuItem Header="렌더(_R)" SubmenuOpened="RenderMenu_SubmenuOpened">
+            <MenuItem x:Name="RenderMenu" Header="렌더(_R)" SubmenuOpened="RenderMenu_SubmenuOpened">
                 <MenuItem x:Name="RenderCopyMenuItem"
                           Header="무인코딩 렌더(_C)..."
                           Click="RenderCopy_Click"
@@ -31,14 +31,14 @@
                           Click="RenderEncode_Click"
                           ToolTip="H.264/AAC로 새 파일을 인코딩합니다."/>
             </MenuItem>
-            <MenuItem Header="보기(_V)">
+            <MenuItem x:Name="ViewMenu" Header="보기(_V)">
                 <MenuItem x:Name="DebugLogMenuItem"
                           Header="디버그 로그 보기"
                           IsCheckable="True"
                           Click="DebugLogMenuItem_Click"/>
             </MenuItem>
-            <MenuItem Header="도움말(_H)">
-                <MenuItem Header="단축키(_K)..." Click="Shortcuts_Click"/>
+            <MenuItem x:Name="HelpMenu" Header="도움말(_H)">
+                <MenuItem x:Name="ShortcutsMenuItem" Header="단축키(_K)..." Click="Shortcuts_Click"/>
             </MenuItem>
         </Menu>
 

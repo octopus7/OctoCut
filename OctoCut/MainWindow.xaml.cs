@@ -38,6 +38,7 @@ public partial class MainWindow : Window
     private readonly FfmpegRenderer _renderer = new();
     private readonly FramePreviewRenderer _framePreviewRenderer = new();
     private readonly TimelinePreviewGenerator _previewGenerator = new();
+    private readonly LocalizationManager _localization = new();
     private readonly AppSettings _settings;
     private readonly List<string> _debugMessages = new();
 
@@ -60,6 +61,7 @@ public partial class MainWindow : Window
         InitializeComponent();
 
         _settings = SettingsStore.Load();
+        InitializeLanguage();
         Timeline.SetClips(_clips);
         Timeline.SetPixelsPerSecond(TimelinePixelsPerSecond);
         Timeline.PositionRequested += Timeline_PositionRequested;
@@ -81,8 +83,22 @@ public partial class MainWindow : Window
         };
 
         RefreshFfmpegStatus();
+        ApplyLocalization();
         UpdateCommandState();
         UpdateTimelineExtent();
+    }
+
+    private void InitializeLanguage()
+    {
+        _localization.Reload();
+
+        if (string.IsNullOrWhiteSpace(_settings.LanguageCode))
+        {
+            _settings.LanguageCode = _localization.DetectPreferredLanguageCode();
+            SettingsStore.Save(_settings);
+        }
+
+        _localization.SetLanguage(_settings.LanguageCode);
     }
 
     private async void Window_Loaded(object sender, RoutedEventArgs e)
@@ -110,12 +126,54 @@ public partial class MainWindow : Window
         }
     }
 
+    private void ApplyLocalization()
+    {
+        FileMenu.Header = _localization.Text("Main.Menu.File");
+        OpenVideoMenuItem.Header = _localization.Text("Main.Menu.OpenVideo");
+        SaveFrameMenuItem.Header = _localization.Text("Main.Menu.SaveFrame");
+        SettingsMenuItem.Header = _localization.Text("Main.Menu.Settings");
+        ExitMenuItem.Header = _localization.Text("Main.Menu.Exit");
+        RenderMenu.Header = _localization.Text("Main.Menu.Render");
+        RenderCopyMenuItem.Header = _localization.Text("Main.Menu.RenderCopy");
+        RenderCopyMenuItem.ToolTip = _localization.Text("Main.Menu.RenderCopy.ToolTip");
+        RenderEncodeMenuItem.Header = _localization.Text("Main.Menu.RenderEncode");
+        RenderEncodeMenuItem.ToolTip = _localization.Text("Main.Menu.RenderEncode.ToolTip");
+        ViewMenu.Header = _localization.Text("Main.Menu.View");
+        DebugLogMenuItem.Header = _localization.Text("Main.Menu.DebugLog");
+        HelpMenu.Header = _localization.Text("Main.Menu.Help");
+        ShortcutsMenuItem.Header = _localization.Text("Main.Menu.Shortcuts");
+
+        if (_videoPath is null)
+        {
+            VideoNameText.Text = _localization.Text("Main.Video.None");
+            VideoPathText.Text = _localization.Text("Main.Video.SelectPrompt");
+        }
+        else
+        {
+            VideoNameText.Text = Path.GetFileName(_videoPath);
+            VideoPathText.Text = _videoPath;
+        }
+
+        OpenButton.Content = _localization.Text("Main.Button.OpenVideo");
+        SplitButton.Content = _localization.Text("Main.Button.Split");
+        SplitButton.ToolTip = _localization.Text("Main.Button.Split.ToolTip");
+        RemoveClipButton.Content = _localization.Text("Main.Button.Delete");
+        RippleDeleteToggle.ToolTip = _localization.Text("Main.Button.RippleDelete.ToolTip");
+        Timeline.EmptyTimelineText = _localization.Text("Timeline.Empty");
+        Timeline.MissingThumbnailText = _localization.Text("Timeline.Thumbnail");
+        Timeline.MissingWaveformText = _localization.Text("Timeline.Waveform");
+        _debugLogWindow?.ApplyLocalization();
+        UpdatePositionText(_currentTimelinePosition);
+        Timeline.InvalidateVisual();
+        UpdateCommandState();
+    }
+
     private void OpenVideo_Click(object sender, RoutedEventArgs e)
     {
         var dialog = new OpenFileDialog
         {
-            Title = "영상 열기",
-            Filter = "영상 파일|*.mp4;*.mov;*.m4v;*.mkv;*.webm;*.avi;*.wmv;*.ts;*.mts;*.m2ts|모든 파일|*.*"
+            Title = _localization.Text("Dialog.OpenVideo.Title"),
+            Filter = _localization.Text("Dialog.Video.Filter")
         };
 
         if (dialog.ShowDialog(this) != true)
@@ -151,7 +209,7 @@ public partial class MainWindow : Window
         VideoNameText.Text = Path.GetFileName(path);
         VideoPathText.Text = path;
         UpdatePositionText(TimeSpan.Zero);
-        LogDebug("영상 정보를 읽는 중...");
+        LogDebug(_localization.Text("Log.Video.Reading"));
 
         Player.Source = new Uri(path);
         Player.Play();
@@ -163,7 +221,7 @@ public partial class MainWindow : Window
     {
         if (!Player.NaturalDuration.HasTimeSpan)
         {
-            LogDebug("영상 길이를 읽을 수 없습니다.");
+            LogDebug(_localization.Text("Log.Video.DurationFailed"));
             UpdateCommandState();
             return;
         }
@@ -173,7 +231,7 @@ public partial class MainWindow : Window
         ResetClips();
         SelectClip(0);
         SetCurrentTimelinePosition(TimeSpan.Zero, seekPlayer: true, keepVisible: true);
-        LogDebug("영상이 열렸습니다.");
+        LogDebug(_localization.Text("Log.Video.Opened"));
         UpdateCommandState();
         _ = GenerateTimelinePreviewAsync();
     }
@@ -266,8 +324,8 @@ public partial class MainWindow : Window
         RefreshClipTimeline();
         SetCurrentTimelinePosition(_currentTimelinePosition, seekPlayer: true, keepVisible: true);
         LogDebug(RippleDeleteToggle.IsChecked == true
-            ? "잔물결 삭제 켜짐: 삭제로 생긴 빈 구간을 뒤 클립이 앞으로 당겨 붙입니다."
-            : "잔물결 삭제 꺼짐: 선택 클립만 삭제합니다.");
+            ? _localization.Text("Log.Ripple.On")
+            : _localization.Text("Log.Ripple.Off"));
     }
 
     private async void Window_PreviewKeyDown(object sender, KeyEventArgs e)
@@ -349,7 +407,7 @@ public partial class MainWindow : Window
         {
             MessageBox.Show(
                 this,
-                "현재 영상 형식이나 클립 상태에서는 무인코딩 렌더를 사용할 수 없습니다. 인코딩 렌더를 사용하세요.",
+                _localization.Text("Message.RenderCopyUnavailable"),
                 "OctoCut",
                 MessageBoxButton.OK,
                 MessageBoxImage.Information);
@@ -366,7 +424,10 @@ public partial class MainWindow : Window
 
     private async void Settings_Click(object sender, RoutedEventArgs e)
     {
-        var window = new SettingsWindow(_settings)
+        _localization.Reload();
+        _localization.SetLanguage(_settings.LanguageCode);
+
+        var window = new SettingsWindow(_settings, _localization)
         {
             Owner = this
         };
@@ -377,7 +438,11 @@ public partial class MainWindow : Window
         }
 
         _settings.FfmpegPath = window.FfmpegPath;
+        _settings.LanguageCode = window.LanguageCode ?? _localization.CurrentLanguageCode;
         SettingsStore.Save(_settings);
+        _localization.Reload();
+        _localization.SetLanguage(_settings.LanguageCode);
+        ApplyLocalization();
         RefreshFfmpegStatus();
         UpdateCommandState();
 
@@ -411,7 +476,7 @@ public partial class MainWindow : Window
 
     private void Shortcuts_Click(object sender, RoutedEventArgs e)
     {
-        var window = new ShortcutsWindow
+        var window = new ShortcutsWindow(_localization)
         {
             Owner = this
         };
@@ -433,7 +498,7 @@ public partial class MainWindow : Window
     {
         if (_debugLogWindow is null)
         {
-            _debugLogWindow = new DebugLogWindow
+            _debugLogWindow = new DebugLogWindow(_localization)
             {
                 Owner = this
             };
@@ -492,12 +557,12 @@ public partial class MainWindow : Window
                 CancellationToken.None);
 
             Clipboard.SetImage(bitmap);
-            LogDebug($"현재 프레임을 클립보드에 복사했습니다. 프레임 {captureRequest.Value.FrameNumber}");
+            LogDebug(_localization.Format("Log.Frame.CopiedToClipboard", captureRequest.Value.FrameNumber));
         }
         catch (Exception ex)
         {
-            LogDebug("현재 프레임 클립보드 복사 실패");
-            MessageBox.Show(this, ex.Message, "프레임 캡처 실패", MessageBoxButton.OK, MessageBoxImage.Error);
+            LogDebug(_localization.Text("Log.Frame.ClipboardFailed"));
+            MessageBox.Show(this, ex.Message, _localization.Text("Message.FrameCapture.FailTitle"), MessageBoxButton.OK, MessageBoxImage.Error);
         }
         finally
         {
@@ -524,13 +589,13 @@ public partial class MainWindow : Window
                 outputPath,
                 CancellationToken.None);
 
-            LogDebug($"현재 프레임을 파일로 저장했습니다: {outputPath}");
-            MessageBox.Show(this, "현재 프레임을 저장했습니다.", "OctoCut", MessageBoxButton.OK, MessageBoxImage.Information);
+            LogDebug(_localization.Format("Log.Frame.SavedToFile", outputPath));
+            MessageBox.Show(this, _localization.Text("Message.FrameSave.Complete"), "OctoCut", MessageBoxButton.OK, MessageBoxImage.Information);
         }
         catch (Exception ex)
         {
-            LogDebug("현재 프레임 파일 저장 실패");
-            MessageBox.Show(this, ex.Message, "프레임 저장 실패", MessageBoxButton.OK, MessageBoxImage.Error);
+            LogDebug(_localization.Text("Log.Frame.SaveFailed"));
+            MessageBox.Show(this, ex.Message, _localization.Text("Message.FrameSave.FailTitle"), MessageBoxButton.OK, MessageBoxImage.Error);
         }
         finally
         {
@@ -565,13 +630,13 @@ public partial class MainWindow : Window
         var sourceName = Path.GetFileNameWithoutExtension(_videoPath);
         var dialog = new SaveFileDialog
         {
-            Title = "현재 프레임 저장",
+            Title = _localization.Text("Dialog.FrameSave.Title"),
             InitialDirectory = Path.GetDirectoryName(_videoPath),
             FileName = $"{sourceName}_frame_{frameNumber:000000}.png",
             DefaultExt = ".png",
             AddExtension = true,
             OverwritePrompt = true,
-            Filter = "PNG 이미지|*.png"
+            Filter = _localization.Text("Dialog.Png.Filter")
         };
 
         return dialog.ShowDialog(this) == true ? dialog.FileName : null;
@@ -588,7 +653,7 @@ public partial class MainWindow : Window
         var clipIndex = FindClipIndexAtTimeline(position);
         if (clipIndex < 0)
         {
-            LogDebug("클립 경계에서는 분할할 수 없습니다.");
+            LogDebug(_localization.Text("Log.Split.Boundary"));
             return;
         }
 
@@ -596,7 +661,7 @@ public partial class MainWindow : Window
         var sourcePosition = clip.SourceFromTimeline(position);
         if (sourcePosition - clip.Start < MinimumClipDuration || clip.End - sourcePosition < MinimumClipDuration)
         {
-            LogDebug("클립 길이가 너무 짧아지는 위치입니다.");
+            LogDebug(_localization.Text("Log.Split.TooShort"));
             return;
         }
 
@@ -606,7 +671,7 @@ public partial class MainWindow : Window
         RefreshClipTimeline();
         SelectClip(clipIndex);
         SetCurrentTimelinePosition(position, seekPlayer: true, keepVisible: true);
-        LogDebug($"{ClipSegment.FormatTime(position)} 위치에서 클립을 분할했습니다.");
+        LogDebug(_localization.Format("Log.Split.Done", ClipSegment.FormatTime(position)));
         UpdateCommandState();
     }
 
@@ -635,8 +700,8 @@ public partial class MainWindow : Window
         }
 
         LogDebug(RippleDeleteToggle.IsChecked == true
-            ? $"{ClipSegment.FormatTime(removedDuration)} 구간을 잔물결 삭제했습니다. 뒤 클립이 빈 구간 없이 앞으로 붙었습니다."
-            : "선택한 클립을 삭제했습니다.");
+            ? _localization.Format("Log.Delete.Ripple", ClipSegment.FormatTime(removedDuration))
+            : _localization.Text("Log.Delete.Selected"));
         UpdateCommandState();
     }
 
@@ -653,7 +718,7 @@ public partial class MainWindow : Window
 
         var target = _currentTimelinePosition + TimeSpan.FromTicks(FrameDuration.Ticks * direction);
         SetCurrentTimelinePosition(target, seekPlayer: true, keepVisible: true);
-        LogDebug($"{(direction < 0 ? "이전" : "다음")} 프레임으로 이동했습니다.");
+        LogDebug(_localization.Text(direction < 0 ? "Log.Step.Previous" : "Log.Step.Next"));
         UpdateCommandState();
     }
 
@@ -681,7 +746,7 @@ public partial class MainWindow : Window
         {
             MessageBox.Show(
                 this,
-                "출력 파일은 원본 영상과 다른 경로여야 합니다.",
+                _localization.Text("Message.OutputSameAsInput"),
                 "OctoCut",
                 MessageBoxButton.OK,
                 MessageBoxImage.Warning);
@@ -698,16 +763,23 @@ public partial class MainWindow : Window
                 _clips.ToList(),
                 outputPath,
                 mode,
+                new RenderProgressText
+                {
+                    NoClips = _localization.Text("Render.Progress.NoClips"),
+                    CreatingSegment = _localization.Text("Render.Progress.CreatingSegment"),
+                    MergingSegments = _localization.Text("Render.Progress.MergingSegments"),
+                    Complete = _localization.Text("Render.Progress.Complete")
+                },
                 progress,
                 CancellationToken.None);
 
-            LogDebug($"렌더 완료: {outputPath}");
-            MessageBox.Show(this, "렌더가 완료되었습니다.", "OctoCut", MessageBoxButton.OK, MessageBoxImage.Information);
+            LogDebug(_localization.Format("Log.Render.Done", outputPath));
+            MessageBox.Show(this, _localization.Text("Message.Render.Complete"), "OctoCut", MessageBoxButton.OK, MessageBoxImage.Information);
         }
         catch (Exception ex)
         {
-            LogDebug("렌더 실패");
-            MessageBox.Show(this, ex.Message, "렌더 실패", MessageBoxButton.OK, MessageBoxImage.Error);
+            LogDebug(_localization.Text("Log.Render.Failed"));
+            MessageBox.Show(this, ex.Message, _localization.Text("Message.Render.FailTitle"), MessageBoxButton.OK, MessageBoxImage.Error);
         }
         finally
         {
@@ -724,7 +796,7 @@ public partial class MainWindow : Window
             return true;
         }
 
-        var missingWindow = new FfmpegMissingWindow
+        var missingWindow = new FfmpegMissingWindow(_localization)
         {
             Owner = this
         };
@@ -775,15 +847,15 @@ public partial class MainWindow : Window
         {
             MessageBox.Show(
                 this,
-                "winget.exe를 찾을 수 없습니다. Microsoft App Installer를 설치하거나 FFmpeg 경로를 직접 지정하세요.",
-                "WinGet 없음",
+                _localization.Text("Message.WingetMissing"),
+                _localization.Text("Message.WingetMissing.Title"),
                 MessageBoxButton.OK,
                 MessageBoxImage.Warning);
             return;
         }
 
         SetBusy(true);
-        LogDebug("winget으로 FFmpeg 설치 중...");
+        LogDebug(_localization.Text("Log.Winget.Installing"));
 
         try
         {
@@ -793,17 +865,17 @@ public partial class MainWindow : Window
             var resolvedPath = ResolveRequiredFfmpegPath();
             if (resolvedPath is null)
             {
-                LogDebug("FFmpeg 설치 후에도 경로를 찾지 못했습니다.");
+                LogDebug(_localization.Text("Log.Ffmpeg.NotFoundAfterInstall"));
                 MessageBox.Show(
                     this,
-                    "설치가 끝났지만 현재 앱에서 ffmpeg.exe를 찾지 못했습니다. OctoCut을 종료합니다.",
-                    "FFmpeg 확인 필요",
+                    _localization.Text("Message.FfmpegNotFoundAfterInstall"),
+                    _localization.Text("Message.FfmpegCheckRequired.Title"),
                     MessageBoxButton.OK,
                     MessageBoxImage.Information);
                 return;
             }
 
-            LogDebug($"FFmpeg 설치 확인: {resolvedPath}");
+            LogDebug(_localization.Format("Log.Ffmpeg.Resolved", resolvedPath));
             if (_videoPath is not null && _sourceDuration > TimeSpan.Zero)
             {
                 await GenerateTimelinePreviewAsync();
@@ -811,8 +883,8 @@ public partial class MainWindow : Window
         }
         catch (Exception ex)
         {
-            LogDebug("winget 설치 실패");
-            MessageBox.Show(this, ex.Message, "winget 설치 실패", MessageBoxButton.OK, MessageBoxImage.Error);
+            LogDebug(_localization.Text("Log.Winget.Failed"));
+            MessageBox.Show(this, ex.Message, _localization.Text("Message.WingetFailed.Title"), MessageBoxButton.OK, MessageBoxImage.Error);
         }
         finally
         {
@@ -839,7 +911,7 @@ public partial class MainWindow : Window
         _previewCancellation = cancellation;
 
         BusyProgress.Visibility = Visibility.Visible;
-        LogDebug("타임라인 썸네일과 오디오 파형 생성 중...");
+        LogDebug(_localization.Text("Log.Preview.Generating"));
 
         try
         {
@@ -850,7 +922,7 @@ public partial class MainWindow : Window
             }
 
             Timeline.SetPreviewAssets(assets.Thumbnails, assets.Waveform);
-            LogDebug("타임라인 미리 보기를 생성했습니다.");
+            LogDebug(_localization.Text("Log.Preview.Done"));
         }
         catch (Exception ex) when (ex is OperationCanceledException or TaskCanceledException)
         {
@@ -859,7 +931,7 @@ public partial class MainWindow : Window
         catch
         {
             Timeline.SetPreviewAssets(EmptyThumbnails, null);
-            LogDebug("썸네일 또는 파형 미리 보기를 생성하지 못했습니다.");
+            LogDebug(_localization.Text("Log.Preview.Failed"));
         }
         finally
         {
@@ -874,8 +946,8 @@ public partial class MainWindow : Window
     {
         var dialog = new OpenFileDialog
         {
-            Title = "ffmpeg.exe 선택",
-            Filter = "ffmpeg.exe|ffmpeg.exe|실행 파일|*.exe|모든 파일|*.*",
+            Title = _localization.Text("Dialog.FfmpegBrowse.Title"),
+            Filter = _localization.Text("Dialog.Exe.Filter"),
             FileName = "ffmpeg.exe"
         };
 
@@ -886,7 +958,7 @@ public partial class MainWindow : Window
 
         if (!FfmpegLocator.IsUsableExecutable(dialog.FileName))
         {
-            MessageBox.Show(this, "선택한 파일을 사용할 수 없습니다.", "OctoCut", MessageBoxButton.OK, MessageBoxImage.Warning);
+            MessageBox.Show(this, _localization.Text("Message.InvalidExecutable"), "OctoCut", MessageBoxButton.OK, MessageBoxImage.Warning);
             return null;
         }
 
@@ -917,15 +989,15 @@ public partial class MainWindow : Window
 
         var dialog = new SaveFileDialog
         {
-            Title = mode == RenderMode.StreamCopy ? "무인코딩 렌더 저장" : "인코딩 렌더 저장",
+            Title = _localization.Text(mode == RenderMode.StreamCopy ? "Dialog.RenderSave.CopyTitle" : "Dialog.RenderSave.EncodeTitle"),
             InitialDirectory = Path.GetDirectoryName(_videoPath),
             FileName = $"{sourceName}_octocut{defaultExtension}",
             DefaultExt = defaultExtension,
             AddExtension = true,
             OverwritePrompt = true,
             Filter = mode == RenderMode.StreamCopy
-                ? $"{sourceExtension.TrimStart('.').ToUpperInvariant()} 파일|*{sourceExtension}|MP4 파일|*.mp4|MKV 파일|*.mkv|모든 파일|*.*"
-                : "MP4 파일|*.mp4|MKV 파일|*.mkv"
+                ? _localization.Format("Dialog.RenderSave.CopyFilter", sourceExtension.TrimStart('.').ToUpperInvariant(), sourceExtension)
+                : _localization.Text("Dialog.RenderSave.EncodeFilter")
         };
 
         return dialog.ShowDialog(this) == true ? dialog.FileName : null;
@@ -1194,7 +1266,7 @@ public partial class MainWindow : Window
     {
         var totalFrames = FrameCountFromDuration(EditDuration);
         var currentFrame = Math.Min(FrameNumberFromTime(position), totalFrames);
-        PositionText.Text = $"{ClipSegment.FormatTime(position)} / {ClipSegment.FormatTime(EditDuration)}   프레임 {currentFrame} / {totalFrames}";
+        PositionText.Text = $"{ClipSegment.FormatTime(position)} / {ClipSegment.FormatTime(EditDuration)}   {_localization.Text("Main.Position.FrameLabel")} {currentFrame} / {totalFrames}";
     }
 
     private static long FrameNumberFromTime(TimeSpan position)
@@ -1273,8 +1345,8 @@ public partial class MainWindow : Window
         var canRender = hasVideo && _clips.Count > 0 && !_isBusy;
 
         PlayPauseButton.IsEnabled = hasVideo && !_isBusy;
-        PlayPauseButton.Content = _isPlaying ? "일시정지" : "재생";
-        PlayPauseButton.ToolTip = _isPlaying ? "일시정지 (Enter)" : "재생 (Enter)";
+        PlayPauseButton.Content = _localization.Text(_isPlaying ? "Main.Button.Pause" : "Main.Button.Play");
+        PlayPauseButton.ToolTip = _localization.Text(_isPlaying ? "Main.Button.Pause.ToolTip" : "Main.Button.Play.ToolTip");
         SplitButton.IsEnabled = hasVideo && !_isBusy;
         RemoveClipButton.IsEnabled = _selectedClipIndex >= 0 && _selectedClipIndex < _clips.Count && !_isBusy;
         SaveFrameMenuItem.IsEnabled = hasVideo && !_isBusy;

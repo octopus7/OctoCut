@@ -68,6 +68,12 @@ public sealed class TimelineView : FrameworkElement
 
     public int SelectedClipIndex { get; private set; } = -1;
 
+    public string EmptyTimelineText { get; set; } = "Open a video to show the edit timeline.";
+
+    public string MissingThumbnailText { get; set; } = "thumbnail";
+
+    public string MissingWaveformText { get; set; } = "audio waveform";
+
     public TimeSpan EditDuration
     {
         get
@@ -176,7 +182,7 @@ public sealed class TimelineView : FrameworkElement
         var duration = EditDuration;
         if (duration <= TimeSpan.Zero)
         {
-            DrawText(drawingContext, "영상을 열면 편집 타임라인이 표시됩니다.", 10, 8, MutedTextBrush, 12);
+            DrawText(drawingContext, EmptyTimelineText, 10, 8, MutedTextBrush, 12);
             return;
         }
 
@@ -265,7 +271,7 @@ public sealed class TimelineView : FrameworkElement
             else
             {
                 drawingContext.DrawRectangle(new SolidColorBrush(Color.FromRgb(225, 229, 235)), null, tileRect);
-                DrawText(drawingContext, "thumbnail", tileRect.X + 8, tileRect.Y + 18, MutedTextBrush, 10);
+                DrawText(drawingContext, MissingThumbnailText, tileRect.X + 8, tileRect.Y + 18, MutedTextBrush, 10);
             }
         }
     }
@@ -274,7 +280,7 @@ public sealed class TimelineView : FrameworkElement
     {
         if (_waveformImage is null || SourceDuration <= TimeSpan.Zero)
         {
-            DrawText(drawingContext, "audio waveform", clipRect.X + 8, clipRect.Y + 18, MutedTextBrush, 10);
+            DrawText(drawingContext, MissingWaveformText, clipRect.X + 8, clipRect.Y + 18, MutedTextBrush, 10);
             return;
         }
 

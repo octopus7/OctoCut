@@ -13,6 +13,7 @@
         </Grid.RowDefinitions>
 
         <TextBlock Grid.Row="0"
+                   x:Name="DescriptionText"
                    FontSize="14"
                    TextWrapping="Wrap"
                    Text="OctoCut 실행에는 FFmpeg가 필요합니다. 현재 설정과 PATH에서 ffmpeg.exe를 찾지 못했습니다. WinGet으로 바로 설치하거나, 이미 설치된 ffmpeg.exe 경로를 직접 지정하세요. 취소하면 OctoCut이 종료됩니다."/>
@@ -25,15 +26,18 @@
                     Margin="0,0,8,0"
                     Content="winget 설치"
                     Click="WingetInstall_Click"/>
-            <Button Width="126"
+            <Button x:Name="DownloadButton"
+                    Width="126"
                     Margin="0,0,8,0"
                     Content="공식 다운로드"
                     Click="Download_Click"/>
-            <Button Width="126"
+            <Button x:Name="BrowseButton"
+                    Width="126"
                     Margin="0,0,8,0"
                     Content="경로 지정"
                     Click="Browse_Click"/>
-            <Button Width="84"
+            <Button x:Name="CancelButton"
+                    Width="84"
                     Content="취소"
                     IsCancel="True"/>
         </StackPanel>
