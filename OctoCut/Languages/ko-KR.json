@@ -72,8 +72,6 @@
     "Main.Menu.Shortcuts": "단축키(_K)...",
     "Main.Menu.View": "보기(_V)",
     "Main.Position.FrameLabel": "프레임",
-    "Main.Video.None": "영상 없음",
-    "Main.Video.SelectPrompt": "파일을 선택하세요.",
     "Message.FfmpegCheckRequired.Title": "FFmpeg 확인 필요",
     "Message.FfmpegNotFoundAfterInstall": "설치가 끝났지만 현재 앱에서 ffmpeg.exe를 찾지 못했습니다. OctoCut을 종료합니다.",
     "Message.FrameCapture.FailTitle": "프레임 캡처 실패",

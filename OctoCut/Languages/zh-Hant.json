@@ -72,8 +72,6 @@
     "Main.Menu.Shortcuts": "快捷鍵(_K)...",
     "Main.Menu.View": "檢視(_V)",
     "Main.Position.FrameLabel": "影格",
-    "Main.Video.None": "無影片",
-    "Main.Video.SelectPrompt": "請選擇檔案。",
     "Message.FfmpegCheckRequired.Title": "需要確認 FFmpeg",
     "Message.FfmpegNotFoundAfterInstall": "安裝已完成，但應用程式仍找不到 ffmpeg.exe。OctoCut 將結束。",
     "Message.FrameCapture.FailTitle": "影格擷取失敗",

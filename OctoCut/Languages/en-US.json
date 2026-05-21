@@ -72,8 +72,6 @@
     "Main.Menu.Shortcuts": "_Shortcuts...",
     "Main.Menu.View": "_View",
     "Main.Position.FrameLabel": "Frame",
-    "Main.Video.None": "No Video",
-    "Main.Video.SelectPrompt": "Choose a file.",
     "Message.FfmpegCheckRequired.Title": "FFmpeg Check Required",
     "Message.FfmpegNotFoundAfterInstall": "Installation finished, but ffmpeg.exe was not found by the app. OctoCut will close.",
     "Message.FrameCapture.FailTitle": "Frame Capture Failed",

@@ -72,8 +72,6 @@
     "Main.Menu.Shortcuts": "快捷键(_K)...",
     "Main.Menu.View": "查看(_V)",
     "Main.Position.FrameLabel": "帧",
-    "Main.Video.None": "无视频",
-    "Main.Video.SelectPrompt": "请选择文件。",
     "Message.FfmpegCheckRequired.Title": "需要确认 FFmpeg",
     "Message.FfmpegNotFoundAfterInstall": "安装已完成，但应用仍未找到 ffmpeg.exe。OctoCut 将退出。",
     "Message.FrameCapture.FailTitle": "帧捕获失败",

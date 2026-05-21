@@ -143,17 +143,7 @@ public partial class MainWindow : Window
         HelpMenu.Header = _localization.Text("Main.Menu.Help");
         ShortcutsMenuItem.Header = _localization.Text("Main.Menu.Shortcuts");
 
-        if (_videoPath is null)
-        {
-            VideoNameText.Text = _localization.Text("Main.Video.None");
-            VideoPathText.Text = _localization.Text("Main.Video.SelectPrompt");
-        }
-        else
-        {
-            VideoNameText.Text = Path.GetFileName(_videoPath);
-            VideoPathText.Text = _videoPath;
-        }
-
+        UpdateWindowTitle();
         OpenButton.Content = _localization.Text("Main.Button.OpenVideo");
         SplitButton.Content = _localization.Text("Main.Button.Split");
         SplitButton.ToolTip = _localization.Text("Main.Button.Split.ToolTip");
@@ -166,6 +156,13 @@ public partial class MainWindow : Window
         UpdatePositionText(_currentTimelinePosition);
         Timeline.InvalidateVisual();
         UpdateCommandState();
+    }
+
+    private void UpdateWindowTitle()
+    {
+        Title = string.IsNullOrWhiteSpace(_videoPath)
+            ? "OctoCut"
+            : $"{Path.GetFileName(_videoPath)} - OctoCut";
     }
 
     private void OpenVideo_Click(object sender, RoutedEventArgs e)
@@ -206,8 +203,7 @@ public partial class MainWindow : Window
         Timeline.SetCurrentPosition(TimeSpan.Zero);
         UpdateTimelineExtent();
 
-        VideoNameText.Text = Path.GetFileName(path);
-        VideoPathText.Text = path;
+        UpdateWindowTitle();
         UpdatePositionText(TimeSpan.Zero);
         LogDebug(_localization.Text("Log.Video.Reading"));
 

@@ -72,8 +72,6 @@
     "Main.Menu.Shortcuts": "ショートカット(_K)...",
     "Main.Menu.View": "表示(_V)",
     "Main.Position.FrameLabel": "フレーム",
-    "Main.Video.None": "動画なし",
-    "Main.Video.SelectPrompt": "ファイルを選択してください。",
     "Message.FfmpegCheckRequired.Title": "FFmpeg の確認が必要です",
     "Message.FfmpegNotFoundAfterInstall": "インストールは完了しましたが、アプリから ffmpeg.exe を見つけられませんでした。OctoCut を終了します。",
     "Message.FrameCapture.FailTitle": "フレームキャプチャ失敗",
