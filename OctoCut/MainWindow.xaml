@@ -8,11 +8,14 @@
         Title="OctoCut" Height="760" Width="1180" MinHeight="680" MinWidth="980"
         Background="#F4F6F8"
         Loaded="Window_Loaded"
-        KeyDown="Window_KeyDown">
+        PreviewKeyDown="Window_PreviewKeyDown">
     <DockPanel>
         <Menu DockPanel.Dock="Top">
             <MenuItem Header="_File">
                 <MenuItem Header="영상 열기(_O)..." Click="OpenVideo_Click"/>
+                <MenuItem x:Name="SaveFrameMenuItem"
+                          Header="현재 프레임 파일로 저장(_F)..."
+                          Click="SaveCurrentFrame_Click"/>
                 <Separator/>
                 <MenuItem Header="설정(_S)..." Click="Settings_Click"/>
                 <Separator/>
@@ -28,23 +31,37 @@
                           Click="RenderEncode_Click"
                           ToolTip="H.264/AAC로 새 파일을 인코딩합니다."/>
             </MenuItem>
+            <MenuItem Header="보기(_V)">
+                <MenuItem x:Name="DebugLogMenuItem"
+                          Header="디버그 로그 보기"
+                          IsCheckable="True"
+                          Click="DebugLogMenuItem_Click"/>
+            </MenuItem>
+            <MenuItem Header="도움말(_H)">
+                <MenuItem Header="단축키(_K)..." Click="Shortcuts_Click"/>
+            </MenuItem>
         </Menu>
 
         <StatusBar DockPanel.Dock="Bottom">
-            <StatusBarItem>
-                <TextBlock x:Name="StatusText" Text="Ready"/>
-            </StatusBarItem>
-            <Separator/>
-            <StatusBarItem>
-                <TextBlock x:Name="FfmpegStatusText" Foreground="#57606A"/>
-            </StatusBarItem>
-            <Separator/>
-            <StatusBarItem>
-                <ProgressBar x:Name="BusyProgress"
-                             Width="180"
-                             Height="12"
-                             IsIndeterminate="True"
-                             Visibility="Collapsed"/>
+            <StatusBarItem HorizontalContentAlignment="Stretch">
+                <Grid Width="{Binding RelativeSource={RelativeSource AncestorType=StatusBar}, Path=ActualWidth}">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="Auto"/>
+                        <ColumnDefinition Width="*"/>
+                    </Grid.ColumnDefinitions>
+                    <ProgressBar x:Name="BusyProgress"
+                                 Grid.Column="0"
+                                 Width="180"
+                                 Height="12"
+                                 IsIndeterminate="True"
+                                 Visibility="Collapsed"/>
+                    <TextBlock x:Name="PositionText"
+                               Grid.Column="1"
+                               MinWidth="320"
+                               Margin="0,0,18,0"
+                               TextAlignment="Right"
+                               Text="00:00.000 / 00:00.000   프레임 0 / 0"/>
+                </Grid>
             </StatusBarItem>
         </StatusBar>
 
@@ -53,18 +70,25 @@
                 <RowDefinition Height="*"/>
                 <RowDefinition Height="Auto"/>
                 <RowDefinition Height="190"/>
+                <RowDefinition Height="Auto"/>
             </Grid.RowDefinitions>
 
             <Border Grid.Row="0"
                     Background="#101318"
                     BorderBrush="#D0D7DE"
                     BorderThickness="1">
-                <MediaElement x:Name="Player"
-                              LoadedBehavior="Manual"
-                              UnloadedBehavior="Manual"
-                              Stretch="Uniform"
-                              MediaOpened="Player_MediaOpened"
-                              MediaEnded="Player_MediaEnded"/>
+                <Grid Background="#101318">
+                    <MediaElement x:Name="Player"
+                                  LoadedBehavior="Manual"
+                                  UnloadedBehavior="Manual"
+                                  Stretch="Uniform"
+                                  MediaOpened="Player_MediaOpened"
+                                  MediaEnded="Player_MediaEnded"/>
+                    <Image x:Name="FramePreviewImage"
+                           Stretch="Uniform"
+                           Visibility="Collapsed"
+                           IsHitTestVisible="False"/>
+                </Grid>
             </Border>
 
             <Grid Grid.Row="1" Margin="0,10,0,10">
@@ -94,51 +118,15 @@
                             Width="96"
                             Margin="0,0,8,0"
                             Content="영상 열기"
+                            Focusable="False"
                             Click="OpenVideo_Click"/>
                     <Button x:Name="PlayPauseButton"
                             Width="96"
                             Margin="0,0,8,0"
                             Content="재생"
                             ToolTip="재생/일시정지 (Enter)"
+                            Focusable="False"
                             Click="PlayPause_Click"/>
-                    <Button x:Name="SplitButton"
-                            Width="128"
-                            Margin="0,0,8,0"
-                            Content="현재 위치 분할"
-                            ToolTip="현재 위치 분할 (S)"
-                            Click="Split_Click"/>
-                    <Button x:Name="RemoveClipButton"
-                            Width="112"
-                            Margin="0,0,8,0"
-                            Content="선택 삭제"
-                            Click="RemoveClip_Click"/>
-                    <ToggleButton x:Name="RippleDeleteToggle"
-                                  Width="32"
-                                  Height="28"
-                                  Margin="0,0,8,0"
-                                  IsChecked="True"
-                                  Click="RippleDeleteToggle_Click"
-                                  ToolTip="잔물결 삭제: 삭제로 생긴 빈 구간을 뒤 클립이 앞으로 당겨 붙여 메웁니다.">
-                        <Viewbox Width="20" Height="18">
-                            <Canvas Width="28" Height="24">
-                                <Path Stroke="#24292F"
-                                      StrokeThickness="2"
-                                      StrokeStartLineCap="Round"
-                                      StrokeEndLineCap="Round"
-                                      Fill="Transparent"
-                                      Data="M14,3 C10,6 18,9 14,12 C10,15 18,18 14,21"/>
-                                <Path Fill="#0969DA"
-                                      Data="M12,12 L7,7 L7,10 L5,10 L5,14 L7,14 L7,17 Z"/>
-                                <Path Fill="#0969DA"
-                                      Data="M16,12 L21,7 L21,10 L23,10 L23,14 L21,14 L21,17 Z"/>
-                            </Canvas>
-                        </Viewbox>
-                    </ToggleButton>
-                    <TextBlock x:Name="PositionText"
-                               MinWidth="180"
-                               VerticalAlignment="Center"
-                               TextAlignment="Right"
-                               Text="00:00.000 / 00:00.000"/>
                 </StackPanel>
             </Grid>
 
@@ -157,6 +145,47 @@
                                            Focusable="True"/>
                 </ScrollViewer>
             </Border>
+
+            <StackPanel Grid.Row="3"
+                        Orientation="Horizontal"
+                        HorizontalAlignment="Left"
+                        Margin="0,8,0,0">
+                <Button x:Name="SplitButton"
+                        Width="128"
+                        Margin="0,0,8,0"
+                        Content="현재 위치 분할"
+                        ToolTip="현재 위치 분할 (S)"
+                        Focusable="False"
+                        Click="Split_Click"/>
+                <Button x:Name="RemoveClipButton"
+                        Width="112"
+                        Margin="0,0,8,0"
+                        Content="선택 삭제"
+                        Focusable="False"
+                        Click="RemoveClip_Click"/>
+                <ToggleButton x:Name="RippleDeleteToggle"
+                              Width="32"
+                              Height="28"
+                              IsChecked="True"
+                              Focusable="False"
+                              Click="RippleDeleteToggle_Click"
+                              ToolTip="잔물결 삭제: 삭제로 생긴 빈 구간을 뒤 클립이 앞으로 당겨 붙여 메웁니다.">
+                    <Viewbox Width="20" Height="18">
+                        <Canvas Width="28" Height="24">
+                            <Path Stroke="#24292F"
+                                  StrokeThickness="2"
+                                  StrokeStartLineCap="Round"
+                                  StrokeEndLineCap="Round"
+                                  Fill="Transparent"
+                                  Data="M14,3 C10,6 18,9 14,12 C10,15 18,18 14,21"/>
+                            <Path Fill="#0969DA"
+                                  Data="M12,12 L7,7 L7,10 L5,10 L5,14 L7,14 L7,17 Z"/>
+                            <Path Fill="#0969DA"
+                                  Data="M16,12 L21,7 L21,10 L23,10 L23,14 L21,14 L21,17 Z"/>
+                        </Canvas>
+                    </Viewbox>
+                </ToggleButton>
+            </StackPanel>
         </Grid>
     </DockPanel>
 </Window>

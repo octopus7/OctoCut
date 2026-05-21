@@ -3,6 +3,7 @@ using System.Diagnostics;
 using System.IO;
 using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Controls.Primitives;
 using System.Windows.Input;
 using System.Windows.Threading;
 using Microsoft.Win32;
@@ -35,14 +36,21 @@ public partial class MainWindow : Window
     private readonly ObservableCollection<ClipSegment> _clips = new();
     private readonly DispatcherTimer _positionTimer;
     private readonly FfmpegRenderer _renderer = new();
+    private readonly FramePreviewRenderer _framePreviewRenderer = new();
     private readonly TimelinePreviewGenerator _previewGenerator = new();
     private readonly AppSettings _settings;
+    private readonly List<string> _debugMessages = new();
 
     private bool _isBusy;
+    private bool _isClosing;
     private bool _isPlaying;
+    private CancellationTokenSource? _framePreviewCancellation;
     private CancellationTokenSource? _previewCancellation;
+    private DebugLogWindow? _debugLogWindow;
+    private int _framePreviewRequestId;
     private string? _ffmpegPath;
     private int _selectedClipIndex = -1;
+    private TimeSpan? _spacePlaybackStartPosition;
     private TimeSpan _currentTimelinePosition = TimeSpan.Zero;
     private TimeSpan _sourceDuration = TimeSpan.Zero;
     private string? _videoPath;
@@ -64,7 +72,13 @@ public partial class MainWindow : Window
         _positionTimer.Tick += (_, _) => RefreshPositionUi();
         _positionTimer.Start();
 
-        Closed += (_, _) => _previewCancellation?.Cancel();
+        Closing += (_, _) => _isClosing = true;
+        Closed += (_, _) =>
+        {
+            _previewCancellation?.Cancel();
+            _framePreviewCancellation?.Cancel();
+            _debugLogWindow?.Close();
+        };
 
         RefreshFfmpegStatus();
         UpdateCommandState();
@@ -82,6 +96,8 @@ public partial class MainWindow : Window
     private TimeSpan EditDuration => _clips.Count == 0 ? TimeSpan.Zero : _clips[^1].TimelineEnd;
 
     private bool HasRenderableClips => _videoPath is not null && _clips.Count > 0;
+
+    private bool CanCaptureCurrentFrame => _videoPath is not null && _clips.Count > 0 && EditDuration > TimeSpan.Zero && !_isBusy;
 
     private bool CanUseStreamCopy
     {
@@ -113,8 +129,12 @@ public partial class MainWindow : Window
     private void LoadVideo(string path)
     {
         _previewCancellation?.Cancel();
+        CancelViewportFrameRefresh();
         _isPlaying = false;
+        _spacePlaybackStartPosition = null;
         Player.Stop();
+        FramePreviewImage.Source = null;
+        FramePreviewImage.Visibility = Visibility.Collapsed;
 
         _videoPath = path;
         _sourceDuration = TimeSpan.Zero;
@@ -130,8 +150,8 @@ public partial class MainWindow : Window
 
         VideoNameText.Text = Path.GetFileName(path);
         VideoPathText.Text = path;
-        PositionText.Text = "00:00.000 / 00:00.000";
-        StatusText.Text = "영상 정보를 읽는 중...";
+        UpdatePositionText(TimeSpan.Zero);
+        LogDebug("영상 정보를 읽는 중...");
 
         Player.Source = new Uri(path);
         Player.Play();
@@ -143,7 +163,7 @@ public partial class MainWindow : Window
     {
         if (!Player.NaturalDuration.HasTimeSpan)
         {
-            StatusText.Text = "영상 길이를 읽을 수 없습니다.";
+            LogDebug("영상 길이를 읽을 수 없습니다.");
             UpdateCommandState();
             return;
         }
@@ -153,7 +173,7 @@ public partial class MainWindow : Window
         ResetClips();
         SelectClip(0);
         SetCurrentTimelinePosition(TimeSpan.Zero, seekPlayer: true, keepVisible: true);
-        StatusText.Text = "영상이 열렸습니다.";
+        LogDebug("영상이 열렸습니다.");
         UpdateCommandState();
         _ = GenerateTimelinePreviewAsync();
     }
@@ -161,6 +181,7 @@ public partial class MainWindow : Window
     private void Player_MediaEnded(object sender, RoutedEventArgs e)
     {
         _isPlaying = false;
+        _spacePlaybackStartPosition = null;
         Player.Pause();
         SetCurrentTimelinePosition(EditDuration, seekPlayer: false, keepVisible: true);
         UpdateCommandState();
@@ -179,6 +200,29 @@ public partial class MainWindow : Window
             return;
         }
 
+        StartPlayback(rememberSpaceStart: false);
+    }
+
+    private void ToggleSpacePlayback()
+    {
+        if (_isPlaying)
+        {
+            var returnPosition = _spacePlaybackStartPosition;
+            PausePlayback();
+
+            if (returnPosition.HasValue)
+            {
+                SetCurrentTimelinePosition(returnPosition.Value, seekPlayer: true, keepVisible: true);
+            }
+
+            return;
+        }
+
+        StartPlayback(rememberSpaceStart: true);
+    }
+
+    private void StartPlayback(bool rememberSpaceStart)
+    {
         if (_videoPath is null || EditDuration <= TimeSpan.Zero)
         {
             return;
@@ -189,8 +233,11 @@ public partial class MainWindow : Window
             SetCurrentTimelinePosition(TimeSpan.Zero, seekPlayer: true, keepVisible: true);
         }
 
+        _spacePlaybackStartPosition = rememberSpaceStart ? _currentTimelinePosition : null;
         _isPlaying = true;
-        SeekPlayerToCurrentTimelinePosition(refreshPausedFrame: false);
+        CancelViewportFrameRefresh();
+        FramePreviewImage.Visibility = Visibility.Collapsed;
+        SeekPlayerToCurrentTimelinePosition();
         Player.Play();
         UpdateCommandState();
     }
@@ -198,7 +245,9 @@ public partial class MainWindow : Window
     private void PausePlayback()
     {
         _isPlaying = false;
+        _spacePlaybackStartPosition = null;
         Player.Pause();
+        RequestViewportFrameRefresh();
         UpdateCommandState();
     }
 
@@ -216,14 +265,14 @@ public partial class MainWindow : Window
     {
         RefreshClipTimeline();
         SetCurrentTimelinePosition(_currentTimelinePosition, seekPlayer: true, keepVisible: true);
-        StatusText.Text = RippleDeleteToggle.IsChecked == true
+        LogDebug(RippleDeleteToggle.IsChecked == true
             ? "잔물결 삭제 켜짐: 삭제로 생긴 빈 구간을 뒤 클립이 앞으로 당겨 붙입니다."
-            : "잔물결 삭제 꺼짐: 선택 클립만 삭제합니다.";
+            : "잔물결 삭제 꺼짐: 선택 클립만 삭제합니다.");
     }
 
-    private void Window_KeyDown(object sender, KeyEventArgs e)
+    private async void Window_PreviewKeyDown(object sender, KeyEventArgs e)
     {
-        if (Keyboard.Modifiers != ModifierKeys.None)
+        if (Keyboard.Modifiers != ModifierKeys.None || IsTextEditingInput(e.OriginalSource))
         {
             return;
         }
@@ -231,6 +280,11 @@ public partial class MainWindow : Window
         if (e.Key == Key.Enter && PlayPauseButton.IsEnabled)
         {
             TogglePlayback();
+            e.Handled = true;
+        }
+        else if (e.Key == Key.Space && PlayPauseButton.IsEnabled)
+        {
+            ToggleSpacePlayback();
             e.Handled = true;
         }
         else if (e.Key == Key.S && SplitButton.IsEnabled)
@@ -253,11 +307,22 @@ public partial class MainWindow : Window
             StepFrame(1);
             e.Handled = true;
         }
+        else if (e.Key == Key.F12 && CanCaptureCurrentFrame)
+        {
+            e.Handled = true;
+            await CopyCurrentFrameToClipboardAsync();
+        }
+    }
+
+    private static bool IsTextEditingInput(object? source)
+    {
+        return source is TextBoxBase or PasswordBox;
     }
 
     private void Timeline_PositionRequested(object? sender, TimelineSeekEventArgs e)
     {
         _isPlaying = false;
+        _spacePlaybackStartPosition = null;
         Player.Pause();
         SetCurrentTimelinePosition(e.Position, seekPlayer: true, keepVisible: false);
         UpdateCommandState();
@@ -327,6 +392,191 @@ public partial class MainWindow : Window
         Close();
     }
 
+    private async void SaveCurrentFrame_Click(object sender, RoutedEventArgs e)
+    {
+        var captureRequest = GetCurrentFrameCaptureRequest();
+        if (captureRequest is null)
+        {
+            return;
+        }
+
+        var outputPath = SelectFrameOutputPath(captureRequest.Value.FrameNumber);
+        if (outputPath is null)
+        {
+            return;
+        }
+
+        await SaveCurrentFrameAsync(captureRequest.Value.SourcePosition, outputPath);
+    }
+
+    private void Shortcuts_Click(object sender, RoutedEventArgs e)
+    {
+        var window = new ShortcutsWindow
+        {
+            Owner = this
+        };
+        window.ShowDialog();
+    }
+
+    private void DebugLogMenuItem_Click(object sender, RoutedEventArgs e)
+    {
+        if (DebugLogMenuItem.IsChecked)
+        {
+            ShowDebugLogWindow();
+            return;
+        }
+
+        _debugLogWindow?.Hide();
+    }
+
+    private void ShowDebugLogWindow()
+    {
+        if (_debugLogWindow is null)
+        {
+            _debugLogWindow = new DebugLogWindow
+            {
+                Owner = this
+            };
+            _debugLogWindow.Closing += (_, args) =>
+            {
+                if (_isClosing)
+                {
+                    return;
+                }
+
+                args.Cancel = true;
+                _debugLogWindow.Hide();
+                DebugLogMenuItem.IsChecked = false;
+            };
+        }
+
+        _debugLogWindow.SetLogText(string.Join(Environment.NewLine, _debugMessages));
+        _debugLogWindow.Show();
+        _debugLogWindow.Activate();
+    }
+
+    private void LogDebug(string message)
+    {
+        if (string.IsNullOrWhiteSpace(message))
+        {
+            return;
+        }
+
+        var line = $"[{DateTime.Now:HH:mm:ss}] {message}";
+        _debugMessages.Add(line);
+        _debugLogWindow?.AppendLog(line);
+    }
+
+    private async Task CopyCurrentFrameToClipboardAsync()
+    {
+        var captureRequest = GetCurrentFrameCaptureRequest();
+        if (captureRequest is null)
+        {
+            return;
+        }
+
+        var ffmpegPath = ResolveRequiredFfmpegPath();
+        if (ffmpegPath is null)
+        {
+            Close();
+            return;
+        }
+
+        SetBusy(true);
+        try
+        {
+            var bitmap = await _framePreviewRenderer.CaptureFrameAsync(
+                ffmpegPath,
+                _videoPath!,
+                captureRequest.Value.SourcePosition,
+                CancellationToken.None);
+
+            Clipboard.SetImage(bitmap);
+            LogDebug($"현재 프레임을 클립보드에 복사했습니다. 프레임 {captureRequest.Value.FrameNumber}");
+        }
+        catch (Exception ex)
+        {
+            LogDebug("현재 프레임 클립보드 복사 실패");
+            MessageBox.Show(this, ex.Message, "프레임 캡처 실패", MessageBoxButton.OK, MessageBoxImage.Error);
+        }
+        finally
+        {
+            SetBusy(false);
+        }
+    }
+
+    private async Task SaveCurrentFrameAsync(TimeSpan sourcePosition, string outputPath)
+    {
+        var ffmpegPath = ResolveRequiredFfmpegPath();
+        if (ffmpegPath is null)
+        {
+            Close();
+            return;
+        }
+
+        SetBusy(true);
+        try
+        {
+            await _framePreviewRenderer.SaveFrameAsync(
+                ffmpegPath,
+                _videoPath!,
+                sourcePosition,
+                outputPath,
+                CancellationToken.None);
+
+            LogDebug($"현재 프레임을 파일로 저장했습니다: {outputPath}");
+            MessageBox.Show(this, "현재 프레임을 저장했습니다.", "OctoCut", MessageBoxButton.OK, MessageBoxImage.Information);
+        }
+        catch (Exception ex)
+        {
+            LogDebug("현재 프레임 파일 저장 실패");
+            MessageBox.Show(this, ex.Message, "프레임 저장 실패", MessageBoxButton.OK, MessageBoxImage.Error);
+        }
+        finally
+        {
+            SetBusy(false);
+        }
+    }
+
+    private (TimeSpan SourcePosition, long FrameNumber)? GetCurrentFrameCaptureRequest()
+    {
+        if (!CanCaptureCurrentFrame)
+        {
+            return null;
+        }
+
+        if (_isPlaying)
+        {
+            SyncTimelinePositionFromPlayer();
+        }
+
+        return (
+            ClampSourcePreviewTime(SourcePositionFromTimeline(_currentTimelinePosition)),
+            FrameNumberFromTime(_currentTimelinePosition));
+    }
+
+    private string? SelectFrameOutputPath(long frameNumber)
+    {
+        if (_videoPath is null)
+        {
+            return null;
+        }
+
+        var sourceName = Path.GetFileNameWithoutExtension(_videoPath);
+        var dialog = new SaveFileDialog
+        {
+            Title = "현재 프레임 저장",
+            InitialDirectory = Path.GetDirectoryName(_videoPath),
+            FileName = $"{sourceName}_frame_{frameNumber:000000}.png",
+            DefaultExt = ".png",
+            AddExtension = true,
+            OverwritePrompt = true,
+            Filter = "PNG 이미지|*.png"
+        };
+
+        return dialog.ShowDialog(this) == true ? dialog.FileName : null;
+    }
+
     private void SplitAtCurrentTimelinePosition()
     {
         if (_videoPath is null || EditDuration <= TimeSpan.Zero)
@@ -338,7 +588,7 @@ public partial class MainWindow : Window
         var clipIndex = FindClipIndexAtTimeline(position);
         if (clipIndex < 0)
         {
-            StatusText.Text = "클립 경계에서는 분할할 수 없습니다.";
+            LogDebug("클립 경계에서는 분할할 수 없습니다.");
             return;
         }
 
@@ -346,7 +596,7 @@ public partial class MainWindow : Window
         var sourcePosition = clip.SourceFromTimeline(position);
         if (sourcePosition - clip.Start < MinimumClipDuration || clip.End - sourcePosition < MinimumClipDuration)
         {
-            StatusText.Text = "클립 길이가 너무 짧아지는 위치입니다.";
+            LogDebug("클립 길이가 너무 짧아지는 위치입니다.");
             return;
         }
 
@@ -356,7 +606,7 @@ public partial class MainWindow : Window
         RefreshClipTimeline();
         SelectClip(clipIndex);
         SetCurrentTimelinePosition(position, seekPlayer: true, keepVisible: true);
-        StatusText.Text = $"{ClipSegment.FormatTime(position)} 위치에서 클립을 분할했습니다.";
+        LogDebug($"{ClipSegment.FormatTime(position)} 위치에서 클립을 분할했습니다.");
         UpdateCommandState();
     }
 
@@ -384,9 +634,9 @@ public partial class MainWindow : Window
             SetCurrentTimelinePosition(ClampToEditDuration(targetPosition), seekPlayer: true, keepVisible: true);
         }
 
-        StatusText.Text = RippleDeleteToggle.IsChecked == true
+        LogDebug(RippleDeleteToggle.IsChecked == true
             ? $"{ClipSegment.FormatTime(removedDuration)} 구간을 잔물결 삭제했습니다. 뒤 클립이 빈 구간 없이 앞으로 붙었습니다."
-            : "선택한 클립을 삭제했습니다.";
+            : "선택한 클립을 삭제했습니다.");
         UpdateCommandState();
     }
 
@@ -398,11 +648,12 @@ public partial class MainWindow : Window
         }
 
         _isPlaying = false;
+        _spacePlaybackStartPosition = null;
         Player.Pause();
 
         var target = _currentTimelinePosition + TimeSpan.FromTicks(FrameDuration.Ticks * direction);
         SetCurrentTimelinePosition(target, seekPlayer: true, keepVisible: true);
-        StatusText.Text = $"{(direction < 0 ? "이전" : "다음")} 프레임으로 이동했습니다.";
+        LogDebug($"{(direction < 0 ? "이전" : "다음")} 프레임으로 이동했습니다.");
         UpdateCommandState();
     }
 
@@ -440,7 +691,7 @@ public partial class MainWindow : Window
         SetBusy(true);
         try
         {
-            var progress = new Progress<string>(message => StatusText.Text = message);
+            var progress = new Progress<string>(LogDebug);
             await _renderer.RenderAsync(
                 ffmpegPath,
                 _videoPath,
@@ -450,12 +701,12 @@ public partial class MainWindow : Window
                 progress,
                 CancellationToken.None);
 
-            StatusText.Text = $"렌더 완료: {outputPath}";
+            LogDebug($"렌더 완료: {outputPath}");
             MessageBox.Show(this, "렌더가 완료되었습니다.", "OctoCut", MessageBoxButton.OK, MessageBoxImage.Information);
         }
         catch (Exception ex)
         {
-            StatusText.Text = "렌더 실패";
+            LogDebug("렌더 실패");
             MessageBox.Show(this, ex.Message, "렌더 실패", MessageBoxButton.OK, MessageBoxImage.Error);
         }
         finally
@@ -532,7 +783,7 @@ public partial class MainWindow : Window
         }
 
         SetBusy(true);
-        StatusText.Text = "winget으로 FFmpeg 설치 중...";
+        LogDebug("winget으로 FFmpeg 설치 중...");
 
         try
         {
@@ -542,7 +793,7 @@ public partial class MainWindow : Window
             var resolvedPath = ResolveRequiredFfmpegPath();
             if (resolvedPath is null)
             {
-                StatusText.Text = "FFmpeg 설치 후에도 경로를 찾지 못했습니다.";
+                LogDebug("FFmpeg 설치 후에도 경로를 찾지 못했습니다.");
                 MessageBox.Show(
                     this,
                     "설치가 끝났지만 현재 앱에서 ffmpeg.exe를 찾지 못했습니다. OctoCut을 종료합니다.",
@@ -552,7 +803,7 @@ public partial class MainWindow : Window
                 return;
             }
 
-            StatusText.Text = $"FFmpeg 설치 확인: {resolvedPath}";
+            LogDebug($"FFmpeg 설치 확인: {resolvedPath}");
             if (_videoPath is not null && _sourceDuration > TimeSpan.Zero)
             {
                 await GenerateTimelinePreviewAsync();
@@ -560,7 +811,7 @@ public partial class MainWindow : Window
         }
         catch (Exception ex)
         {
-            StatusText.Text = "winget 설치 실패";
+            LogDebug("winget 설치 실패");
             MessageBox.Show(this, ex.Message, "winget 설치 실패", MessageBoxButton.OK, MessageBoxImage.Error);
         }
         finally
@@ -588,7 +839,7 @@ public partial class MainWindow : Window
         _previewCancellation = cancellation;
 
         BusyProgress.Visibility = Visibility.Visible;
-        StatusText.Text = "타임라인 썸네일과 오디오 파형 생성 중...";
+        LogDebug("타임라인 썸네일과 오디오 파형 생성 중...");
 
         try
         {
@@ -599,7 +850,7 @@ public partial class MainWindow : Window
             }
 
             Timeline.SetPreviewAssets(assets.Thumbnails, assets.Waveform);
-            StatusText.Text = "타임라인 미리 보기를 생성했습니다.";
+            LogDebug("타임라인 미리 보기를 생성했습니다.");
         }
         catch (Exception ex) when (ex is OperationCanceledException or TaskCanceledException)
         {
@@ -608,7 +859,7 @@ public partial class MainWindow : Window
         catch
         {
             Timeline.SetPreviewAssets(EmptyThumbnails, null);
-            StatusText.Text = "썸네일 또는 파형 미리 보기를 생성하지 못했습니다.";
+            LogDebug("썸네일 또는 파형 미리 보기를 생성하지 못했습니다.");
         }
         finally
         {
@@ -761,6 +1012,7 @@ public partial class MainWindow : Window
     private void StopAtTimelineEnd()
     {
         _isPlaying = false;
+        _spacePlaybackStartPosition = null;
         Player.Pause();
         SetCurrentTimelinePosition(EditDuration, seekPlayer: false, keepVisible: true);
         UpdateCommandState();
@@ -780,16 +1032,21 @@ public partial class MainWindow : Window
 
         if (seekPlayer)
         {
-            SeekPlayerToCurrentTimelinePosition(refreshPausedFrame: !_isPlaying);
+            SeekPlayerToCurrentTimelinePosition();
         }
 
         if (keepVisible)
         {
             EnsureTimelinePositionVisible();
         }
+
+        if (!_isPlaying)
+        {
+            RequestViewportFrameRefresh();
+        }
     }
 
-    private void SeekPlayerToCurrentTimelinePosition(bool refreshPausedFrame)
+    private void SeekPlayerToCurrentTimelinePosition()
     {
         if (_videoPath is null || _clips.Count == 0)
         {
@@ -797,11 +1054,86 @@ public partial class MainWindow : Window
         }
 
         Player.Position = SourcePositionFromTimeline(_currentTimelinePosition);
-        if (refreshPausedFrame)
+    }
+
+    private void RequestViewportFrameRefresh()
+    {
+        if (_isPlaying || _videoPath is null || _clips.Count == 0)
         {
-            Player.Play();
-            Player.Pause();
+            return;
         }
+
+        var ffmpegPath = _ffmpegPath ?? ResolveRequiredFfmpegPath();
+        if (ffmpegPath is null)
+        {
+            Close();
+            return;
+        }
+
+        var sourcePosition = ClampSourcePreviewTime(SourcePositionFromTimeline(_currentTimelinePosition));
+        _framePreviewCancellation?.Cancel();
+
+        var cancellation = new CancellationTokenSource();
+        _framePreviewCancellation = cancellation;
+        var requestId = ++_framePreviewRequestId;
+
+        _ = RenderViewportFrameAsync(requestId, ffmpegPath, _videoPath, sourcePosition, cancellation.Token);
+    }
+
+    private async Task RenderViewportFrameAsync(
+        int requestId,
+        string ffmpegPath,
+        string videoPath,
+        TimeSpan sourcePosition,
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            var frame = await _framePreviewRenderer.RenderFrameAsync(ffmpegPath, videoPath, sourcePosition, cancellationToken);
+            if (cancellationToken.IsCancellationRequested || requestId != _framePreviewRequestId)
+            {
+                return;
+            }
+
+            FramePreviewImage.Source = frame;
+            FramePreviewImage.Visibility = Visibility.Visible;
+        }
+        catch (Exception ex) when (ex is OperationCanceledException or TaskCanceledException)
+        {
+            // A newer seek request superseded this frame.
+        }
+        catch
+        {
+            if (requestId == _framePreviewRequestId)
+            {
+                FramePreviewImage.Visibility = Visibility.Collapsed;
+            }
+        }
+    }
+
+    private void CancelViewportFrameRefresh()
+    {
+        _framePreviewCancellation?.Cancel();
+        _framePreviewRequestId++;
+    }
+
+    private TimeSpan ClampSourcePreviewTime(TimeSpan sourcePosition)
+    {
+        if (sourcePosition < TimeSpan.Zero)
+        {
+            return TimeSpan.Zero;
+        }
+
+        if (_sourceDuration <= TimeSpan.Zero)
+        {
+            return sourcePosition;
+        }
+
+        var maxPosition = _sourceDuration > TimeSpan.FromMilliseconds(1)
+            ? _sourceDuration - TimeSpan.FromMilliseconds(1)
+            : _sourceDuration;
+
+        return sourcePosition > maxPosition ? maxPosition : sourcePosition;
     }
 
     private TimeSpan SourcePositionFromTimeline(TimeSpan timelinePosition)
@@ -860,7 +1192,29 @@ public partial class MainWindow : Window
 
     private void UpdatePositionText(TimeSpan position)
     {
-        PositionText.Text = $"{ClipSegment.FormatTime(position)} / {ClipSegment.FormatTime(EditDuration)}";
+        var totalFrames = FrameCountFromDuration(EditDuration);
+        var currentFrame = Math.Min(FrameNumberFromTime(position), totalFrames);
+        PositionText.Text = $"{ClipSegment.FormatTime(position)} / {ClipSegment.FormatTime(EditDuration)}   프레임 {currentFrame} / {totalFrames}";
+    }
+
+    private static long FrameNumberFromTime(TimeSpan position)
+    {
+        if (position <= TimeSpan.Zero)
+        {
+            return 0;
+        }
+
+        return (long)Math.Floor(position.TotalSeconds / FrameDuration.TotalSeconds);
+    }
+
+    private static long FrameCountFromDuration(TimeSpan duration)
+    {
+        if (duration <= TimeSpan.Zero)
+        {
+            return 0;
+        }
+
+        return (long)Math.Ceiling(duration.TotalSeconds / FrameDuration.TotalSeconds);
     }
 
     private void UpdateTimelineExtent()
@@ -904,9 +1258,6 @@ public partial class MainWindow : Window
     {
         var resolvedPath = FfmpegLocator.Resolve(_settings.FfmpegPath);
         _ffmpegPath = resolvedPath;
-        FfmpegStatusText.Text = resolvedPath is null
-            ? "FFmpeg: 찾을 수 없음"
-            : $"FFmpeg: {resolvedPath}";
     }
 
     private void SetBusy(bool isBusy)
@@ -926,6 +1277,7 @@ public partial class MainWindow : Window
         PlayPauseButton.ToolTip = _isPlaying ? "일시정지 (Enter)" : "재생 (Enter)";
         SplitButton.IsEnabled = hasVideo && !_isBusy;
         RemoveClipButton.IsEnabled = _selectedClipIndex >= 0 && _selectedClipIndex < _clips.Count && !_isBusy;
+        SaveFrameMenuItem.IsEnabled = hasVideo && !_isBusy;
         RenderCopyMenuItem.IsEnabled = canRender && CanUseStreamCopy;
         RenderEncodeMenuItem.IsEnabled = canRender;
     }
