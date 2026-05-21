@@ -102,6 +102,24 @@
                                 Margin="0,0,8,0"
                                 Content="현재 위치 분할 (S)"
                                 Click="Split_Click"/>
+                        <ToggleButton x:Name="RippleDeleteToggle"
+                                      Width="32"
+                                      Height="28"
+                                      Margin="0,0,8,0"
+                                      IsChecked="True"
+                                      Click="RippleDeleteToggle_Click"
+                                      ToolTip="리플 삭제: 켜짐이면 삭제한 구간만큼 뒤 클립이 앞으로 당겨집니다.">
+                            <Viewbox Width="17" Height="17">
+                                <Canvas Width="24" Height="24">
+                                    <Path Stroke="#24292F"
+                                          StrokeThickness="2"
+                                          StrokeStartLineCap="Round"
+                                          StrokeEndLineCap="Round"
+                                          StrokeLineJoin="Round"
+                                          Data="M4,7 L13,7 M9,3 L13,7 L9,11 M20,17 L11,17 M15,13 L11,17 L15,21"/>
+                                </Canvas>
+                            </Viewbox>
+                        </ToggleButton>
                     </StackPanel>
                 </DockPanel>
             </Grid>

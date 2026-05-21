@@ -6,12 +6,16 @@ namespace OctoCut.Models;
 public sealed class ClipSegment : INotifyPropertyChanged
 {
     private int _index;
+    private TimeSpan _timelineStart;
+    private TimeSpan _timelineEnd;
 
     public ClipSegment(int index, TimeSpan start, TimeSpan end)
     {
         _index = index;
         Start = start;
         End = end;
+        _timelineStart = start;
+        _timelineEnd = end;
     }
 
     public event PropertyChangedEventHandler? PropertyChanged;
@@ -37,11 +41,46 @@ public sealed class ClipSegment : INotifyPropertyChanged
 
     public TimeSpan Duration => End - Start;
 
-    public string DisplayStart => FormatTime(Start);
+    public TimeSpan TimelineStart => _timelineStart;
 
-    public string DisplayEnd => FormatTime(End);
+    public TimeSpan TimelineEnd => _timelineEnd;
+
+    public string DisplayStart => FormatTime(TimelineStart);
+
+    public string DisplayEnd => FormatTime(TimelineEnd);
 
     public string DisplayDuration => FormatTime(Duration);
+
+    public void SetTimelineStart(TimeSpan timelineStart)
+    {
+        var timelineEnd = timelineStart + Duration;
+        if (_timelineStart == timelineStart && _timelineEnd == timelineEnd)
+        {
+            return;
+        }
+
+        _timelineStart = timelineStart;
+        _timelineEnd = timelineEnd;
+        OnPropertyChanged(nameof(TimelineStart));
+        OnPropertyChanged(nameof(TimelineEnd));
+        OnPropertyChanged(nameof(DisplayStart));
+        OnPropertyChanged(nameof(DisplayEnd));
+    }
+
+    public void ResetTimelineToSource()
+    {
+        if (_timelineStart == Start && _timelineEnd == End)
+        {
+            return;
+        }
+
+        _timelineStart = Start;
+        _timelineEnd = End;
+        OnPropertyChanged(nameof(TimelineStart));
+        OnPropertyChanged(nameof(TimelineEnd));
+        OnPropertyChanged(nameof(DisplayStart));
+        OnPropertyChanged(nameof(DisplayEnd));
+    }
 
     public bool Contains(TimeSpan position)
     {

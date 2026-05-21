@@ -174,7 +174,7 @@ public partial class MainWindow : Window
         _clips.RemoveAt(clipIndex);
         _clips.Insert(clipIndex, new ClipSegment(0, position, clip.End));
         _clips.Insert(clipIndex, new ClipSegment(0, clip.Start, position));
-        RenumberClips();
+        RefreshClipTimeline();
         ClipList.SelectedIndex = clipIndex;
         StatusText.Text = $"{ClipSegment.FormatTime(position)} 위치에서 분할했습니다.";
         UpdateCommandState();
@@ -182,33 +182,57 @@ public partial class MainWindow : Window
 
     private void RemoveClip_Click(object sender, RoutedEventArgs e)
     {
+        RemoveSelectedClip();
+    }
+
+    private void RemoveSelectedClip()
+    {
         if (ClipList.SelectedItem is not ClipSegment clip)
         {
             return;
         }
 
         var previousIndex = ClipList.SelectedIndex;
+        var removedDuration = clip.Duration;
         _clips.Remove(clip);
-        RenumberClips();
+        RefreshClipTimeline();
 
         if (_clips.Count > 0)
         {
             ClipList.SelectedIndex = Math.Min(previousIndex, _clips.Count - 1);
         }
 
-        StatusText.Text = "선택한 클립을 렌더 목록에서 제거했습니다.";
+        StatusText.Text = RippleDeleteToggle.IsChecked == true
+            ? $"{ClipSegment.FormatTime(removedDuration)} 구간을 리플 삭제했습니다."
+            : "선택한 클립을 제거했습니다. 리플 삭제가 꺼져 있어 원본 타임코드 간격을 표시합니다.";
         UpdateCommandState();
     }
 
     private void Window_KeyDown(object sender, KeyEventArgs e)
     {
-        if (e.Key != Key.S || Keyboard.Modifiers != ModifierKeys.None || !SplitButton.IsEnabled)
+        if (Keyboard.Modifiers != ModifierKeys.None)
         {
             return;
         }
 
-        Split_Click(sender, e);
-        e.Handled = true;
+        if (e.Key == Key.S && SplitButton.IsEnabled)
+        {
+            Split_Click(sender, e);
+            e.Handled = true;
+        }
+        else if (e.Key == Key.Delete && RemoveClipButton.IsEnabled)
+        {
+            RemoveSelectedClip();
+            e.Handled = true;
+        }
+    }
+
+    private void RippleDeleteToggle_Click(object sender, RoutedEventArgs e)
+    {
+        RefreshClipTimeline();
+        StatusText.Text = RippleDeleteToggle.IsChecked == true
+            ? "리플 삭제가 켜졌습니다."
+            : "리플 삭제가 꺼졌습니다.";
     }
 
     private void ClipList_SelectionChanged(object sender, SelectionChangedEventArgs e)
@@ -471,11 +495,23 @@ public partial class MainWindow : Window
         return -1;
     }
 
-    private void RenumberClips()
+    private void RefreshClipTimeline()
     {
+        var timelineStart = TimeSpan.Zero;
         for (var index = 0; index < _clips.Count; index++)
         {
-            _clips[index].Index = index + 1;
+            var clip = _clips[index];
+            clip.Index = index + 1;
+
+            if (RippleDeleteToggle.IsChecked == true)
+            {
+                clip.SetTimelineStart(timelineStart);
+                timelineStart += clip.Duration;
+            }
+            else
+            {
+                clip.ResetTimelineToSource();
+            }
         }
     }
 
