@@ -78,6 +78,7 @@ public partial class MainWindow : Window
         Timeline.ClipSelected += Timeline_ClipSelected;
         Timeline.ClipDragRequested += Timeline_ClipDragRequested;
         Timeline.ScaleRequested += Timeline_ScaleRequested;
+        Timeline.ScrollRequested += Timeline_ScrollRequested;
 
         _positionTimer = new DispatcherTimer
         {
@@ -503,6 +504,11 @@ public partial class MainWindow : Window
     private void Timeline_ScaleRequested(object? sender, TimelineScaleEventArgs e)
     {
         AdjustTimelineScale(e.WheelDelta, e.AnchorPosition);
+    }
+
+    private void Timeline_ScrollRequested(object? sender, TimelineScrollEventArgs e)
+    {
+        ScrollTimelineView(e.WheelDelta);
     }
 
     private void TimelineScroll_SizeChanged(object sender, SizeChangedEventArgs e)
@@ -1744,6 +1750,19 @@ public partial class MainWindow : Window
 
         var nextOffset = anchorSeconds * nextPixelsPerSecond - anchorViewportX;
         TimelineScroll.ScrollToHorizontalOffset(Math.Max(0, nextOffset));
+    }
+
+    private void ScrollTimelineView(int wheelDelta)
+    {
+        if (TimelineScroll.ScrollableWidth <= 0)
+        {
+            return;
+        }
+
+        const double wheelScrollPixels = 96;
+        var direction = wheelDelta > 0 ? -1 : 1;
+        var nextOffset = TimelineScroll.HorizontalOffset + direction * wheelScrollPixels;
+        TimelineScroll.ScrollToHorizontalOffset(Math.Clamp(nextOffset, 0, TimelineScroll.ScrollableWidth));
     }
 
     private void EnsureTimelinePositionVisible()

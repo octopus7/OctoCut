@@ -31,6 +31,11 @@ public sealed class TimelineScaleEventArgs(int wheelDelta, TimeSpan anchorPositi
     public TimeSpan AnchorPosition { get; } = anchorPosition;
 }
 
+public sealed class TimelineScrollEventArgs(int wheelDelta) : EventArgs
+{
+    public int WheelDelta { get; } = wheelDelta;
+}
+
 public sealed class TimelineThumbnail(TimeSpan sourceTime, BitmapSource image)
 {
     public TimeSpan SourceTime { get; } = sourceTime;
@@ -81,6 +86,8 @@ public sealed class TimelineView : FrameworkElement
     public event EventHandler<TimelineClipDragEventArgs>? ClipDragRequested;
 
     public event EventHandler<TimelineScaleEventArgs>? ScaleRequested;
+
+    public event EventHandler<TimelineScrollEventArgs>? ScrollRequested;
 
     public ObservableCollection<ClipSegment> Clips { get; set; }
 
@@ -256,6 +263,8 @@ public sealed class TimelineView : FrameworkElement
         var point = e.GetPosition(this);
         if (point.Y < 0 || point.Y > RulerHeight)
         {
+            ScrollRequested?.Invoke(this, new TimelineScrollEventArgs(e.Delta));
+            e.Handled = true;
             return;
         }
 
