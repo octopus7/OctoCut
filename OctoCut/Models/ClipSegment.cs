@@ -8,10 +8,13 @@ public sealed class ClipSegment : INotifyPropertyChanged
     private int _index;
     private TimeSpan _timelineStart;
     private TimeSpan _timelineEnd;
+    private TimeSpan _transitionInDuration;
 
-    public ClipSegment(int index, TimeSpan start, TimeSpan end)
+    public ClipSegment(int index, string sourcePath, TimeSpan sourceDuration, TimeSpan start, TimeSpan end)
     {
         _index = index;
+        SourcePath = sourcePath;
+        SourceDuration = sourceDuration;
         Start = start;
         End = end;
         _timelineStart = start;
@@ -35,6 +38,10 @@ public sealed class ClipSegment : INotifyPropertyChanged
         }
     }
 
+    public string SourcePath { get; }
+
+    public TimeSpan SourceDuration { get; }
+
     public TimeSpan Start { get; }
 
     public TimeSpan End { get; }
@@ -50,6 +57,22 @@ public sealed class ClipSegment : INotifyPropertyChanged
     public string DisplayEnd => FormatTime(TimelineEnd);
 
     public string DisplayDuration => FormatTime(Duration);
+
+    public TimeSpan TransitionInDuration
+    {
+        get => _transitionInDuration;
+        set
+        {
+            var nextValue = value < TimeSpan.Zero ? TimeSpan.Zero : value;
+            if (_transitionInDuration == nextValue)
+            {
+                return;
+            }
+
+            _transitionInDuration = nextValue;
+            OnPropertyChanged();
+        }
+    }
 
     public void SetTimelineStart(TimeSpan timelineStart)
     {

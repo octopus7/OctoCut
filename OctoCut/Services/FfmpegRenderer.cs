@@ -1,5 +1,8 @@
 using System.Diagnostics;
+using System.Globalization;
 using System.IO;
+using System.Text;
+using System.Text.RegularExpressions;
 using OctoCut.Models;
 
 namespace OctoCut.Services;
@@ -8,7 +11,6 @@ public sealed class FfmpegRenderer
 {
     public async Task RenderAsync(
         string ffmpegPath,
-        string inputPath,
         IReadOnlyList<ClipSegment> clips,
         string outputPath,
         RenderMode mode,
@@ -27,6 +29,11 @@ public sealed class FfmpegRenderer
         try
         {
             var outputExtension = NormalizeExtension(Path.GetExtension(outputPath), ".mp4");
+            var needsTransitionRender = mode == RenderMode.Encode && HasTransitions(clips);
+            var needsNormalizedEncode = mode == RenderMode.Encode;
+            var renderSize = needsNormalizedEncode
+                ? await ProbeVideoSizeAsync(ffmpegPath, clips[0].SourcePath, cancellationToken)
+                : null;
             var segmentPaths = new List<string>();
 
             for (var index = 0; index < clips.Count; index++)
@@ -34,18 +41,29 @@ public sealed class FfmpegRenderer
                 cancellationToken.ThrowIfCancellationRequested();
 
                 var clip = clips[index];
-                var segmentPath = Path.Combine(tempDirectory, $"segment_{index:000}{outputExtension}");
+                var segmentExtension = mode == RenderMode.Encode ? ".mp4" : outputExtension;
+                var segmentPath = Path.Combine(tempDirectory, $"segment_{index:000}{segmentExtension}");
+                var useSilentAudio = mode == RenderMode.Encode && !await HasAudioStreamAsync(ffmpegPath, clip.SourcePath, cancellationToken);
                 progress?.Report(string.Format(text.CreatingSegment, index + 1, clips.Count));
 
                 await CreateSegmentAsync(
                     ffmpegPath,
-                    inputPath,
                     segmentPath,
                     clip,
                     mode,
+                    renderSize,
+                    useSilentAudio,
                     cancellationToken);
 
                 segmentPaths.Add(segmentPath);
+            }
+
+            if (needsTransitionRender)
+            {
+                progress?.Report(text.MergingSegments);
+                await CreateTransitionRenderAsync(ffmpegPath, segmentPaths, clips, outputPath, cancellationToken);
+                progress?.Report(text.Complete);
+                return;
             }
 
             progress?.Report(text.MergingSegments);
@@ -78,14 +96,15 @@ public sealed class FfmpegRenderer
 
     private static async Task CreateSegmentAsync(
         string ffmpegPath,
-        string inputPath,
         string segmentPath,
         ClipSegment clip,
         RenderMode mode,
+        VideoRenderSize? renderSize,
+        bool useSilentAudio,
         CancellationToken cancellationToken)
     {
-        var duration = clip.Duration.TotalSeconds.ToString("0.###", System.Globalization.CultureInfo.InvariantCulture);
-        var start = clip.Start.TotalSeconds.ToString("0.###", System.Globalization.CultureInfo.InvariantCulture);
+        var duration = FormatSeconds(clip.Duration);
+        var start = FormatSeconds(clip.Start);
 
         var arguments = new List<string> { "-y" };
 
@@ -94,7 +113,7 @@ public sealed class FfmpegRenderer
             arguments.AddRange(new[]
             {
                 "-ss", start,
-                "-i", inputPath,
+                "-i", clip.SourcePath,
                 "-t", duration,
                 "-map", "0:v:0?",
                 "-map", "0:a?",
@@ -104,23 +123,52 @@ public sealed class FfmpegRenderer
         }
         else
         {
+            arguments.AddRange(new[] { "-i", clip.SourcePath });
+            if (useSilentAudio)
+            {
+                arguments.AddRange(new[]
+                {
+                    "-f", "lavfi",
+                    "-i", "anullsrc=channel_layout=stereo:sample_rate=48000"
+                });
+            }
+
             arguments.AddRange(new[]
             {
-                "-i", inputPath,
                 "-ss", start,
                 "-t", duration,
                 "-map", "0:v:0?",
-                "-map", "0:a?",
                 "-sn"
             });
+
+            arguments.AddRange(useSilentAudio
+                ? new[] { "-map", "1:a:0" }
+                : new[] { "-map", "0:a:0?" });
+
+            if (renderSize is not null)
+            {
+                arguments.AddRange(new[]
+                {
+                    "-vf",
+                    $"scale={renderSize.Width}:{renderSize.Height}:force_original_aspect_ratio=decrease,pad={renderSize.Width}:{renderSize.Height}:(ow-iw)/2:(oh-ih)/2,setsar=1,fps=30,format=yuv420p"
+                });
+            }
+
             arguments.AddRange(new[]
             {
                 "-c:v", "libx264",
                 "-preset", "veryfast",
                 "-crf", "20",
                 "-c:a", "aac",
+                "-ac", "2",
+                "-ar", "48000",
                 "-b:a", "192k"
             });
+
+            if (useSilentAudio)
+            {
+                arguments.Add("-shortest");
+            }
 
             if (UsesMovContainer(segmentPath))
             {
@@ -129,6 +177,81 @@ public sealed class FfmpegRenderer
         }
 
         arguments.Add(segmentPath);
+        await RunFfmpegAsync(ffmpegPath, arguments, cancellationToken);
+    }
+
+    private static async Task CreateTransitionRenderAsync(
+        string ffmpegPath,
+        IReadOnlyList<string> segmentPaths,
+        IReadOnlyList<ClipSegment> clips,
+        string outputPath,
+        CancellationToken cancellationToken)
+    {
+        var arguments = new List<string> { "-y" };
+        foreach (var segmentPath in segmentPaths)
+        {
+            arguments.AddRange(new[] { "-i", segmentPath });
+        }
+
+        var filter = new StringBuilder();
+        for (var index = 0; index < segmentPaths.Count; index++)
+        {
+            filter.Append(CultureInfo.InvariantCulture, $"[{index}:v]setpts=PTS-STARTPTS[v{index}];");
+            filter.Append(CultureInfo.InvariantCulture, $"[{index}:a]asetpts=PTS-STARTPTS[a{index}];");
+        }
+
+        var videoLabel = "v0";
+        var audioLabel = "a0";
+        var accumulatedDuration = clips[0].Duration;
+
+        for (var index = 1; index < clips.Count; index++)
+        {
+            var transition = ClampFilterTransition(clips[index].TransitionInDuration, accumulatedDuration, clips[index].Duration);
+            var nextVideoLabel = $"vx{index}";
+            var nextAudioLabel = $"ax{index}";
+
+            if (transition <= TimeSpan.Zero)
+            {
+                filter.Append(CultureInfo.InvariantCulture, $"[{videoLabel}][v{index}]concat=n=2:v=1:a=0[{nextVideoLabel}];");
+                filter.Append(CultureInfo.InvariantCulture, $"[{audioLabel}][a{index}]concat=n=2:v=0:a=1[{nextAudioLabel}];");
+                accumulatedDuration += clips[index].Duration;
+            }
+            else
+            {
+                var offset = accumulatedDuration - transition;
+                if (offset < TimeSpan.Zero)
+                {
+                    offset = TimeSpan.Zero;
+                }
+
+                filter.Append(CultureInfo.InvariantCulture, $"[{videoLabel}][v{index}]xfade=transition=fade:duration={FormatSeconds(transition)}:offset={FormatSeconds(offset)}[{nextVideoLabel}];");
+                filter.Append(CultureInfo.InvariantCulture, $"[{audioLabel}][a{index}]acrossfade=d={FormatSeconds(transition)}:c1=tri:c2=tri[{nextAudioLabel}];");
+                accumulatedDuration += clips[index].Duration - transition;
+            }
+
+            videoLabel = nextVideoLabel;
+            audioLabel = nextAudioLabel;
+        }
+
+        arguments.AddRange(new[]
+        {
+            "-filter_complex", filter.ToString(),
+            "-map", $"[{videoLabel}]",
+            "-map", $"[{audioLabel}]",
+            "-c:v", "libx264",
+            "-preset", "veryfast",
+            "-crf", "20",
+            "-pix_fmt", "yuv420p",
+            "-c:a", "aac",
+            "-b:a", "192k"
+        });
+
+        if (UsesMovContainer(outputPath))
+        {
+            arguments.AddRange(new[] { "-movflags", "+faststart" });
+        }
+
+        arguments.Add(outputPath);
         await RunFfmpegAsync(ffmpegPath, arguments, cancellationToken);
     }
 
@@ -165,6 +288,84 @@ public sealed class FfmpegRenderer
 
         var message = string.IsNullOrWhiteSpace(standardError) ? standardOutput : standardError;
         throw new InvalidOperationException(TrimForDialog(message));
+    }
+
+    private static bool HasTransitions(IReadOnlyList<ClipSegment> clips)
+    {
+        return clips.Skip(1).Any(clip => clip.TransitionInDuration > TimeSpan.Zero);
+    }
+
+    private static TimeSpan ClampFilterTransition(TimeSpan requested, TimeSpan accumulatedDuration, TimeSpan nextDuration)
+    {
+        if (requested <= TimeSpan.Zero)
+        {
+            return TimeSpan.Zero;
+        }
+
+        var maxTicks = Math.Min(accumulatedDuration.Ticks, nextDuration.Ticks) - TimeSpan.FromMilliseconds(50).Ticks;
+        if (maxTicks <= 0)
+        {
+            return TimeSpan.Zero;
+        }
+
+        return requested.Ticks > maxTicks ? TimeSpan.FromTicks(maxTicks) : requested;
+    }
+
+    private static async Task<bool> HasAudioStreamAsync(
+        string ffmpegPath,
+        string inputPath,
+        CancellationToken cancellationToken)
+    {
+        var output = await RunFfmpegProbeAsync(ffmpegPath, inputPath, cancellationToken);
+        return output.Contains("Audio:", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static async Task<VideoRenderSize?> ProbeVideoSizeAsync(
+        string ffmpegPath,
+        string inputPath,
+        CancellationToken cancellationToken)
+    {
+        var output = await RunFfmpegProbeAsync(ffmpegPath, inputPath, cancellationToken);
+        var match = Regex.Match(output, @"Video:.*?,\s*(?<width>\d{2,5})x(?<height>\d{2,5})", RegexOptions.IgnoreCase);
+        if (!match.Success)
+        {
+            return null;
+        }
+
+        var width = int.Parse(match.Groups["width"].Value, CultureInfo.InvariantCulture);
+        var height = int.Parse(match.Groups["height"].Value, CultureInfo.InvariantCulture);
+        width = Math.Max(2, width / 2 * 2);
+        height = Math.Max(2, height / 2 * 2);
+        return new VideoRenderSize(width, height);
+    }
+
+    private static async Task<string> RunFfmpegProbeAsync(
+        string ffmpegPath,
+        string inputPath,
+        CancellationToken cancellationToken)
+    {
+        using var process = new Process();
+        process.StartInfo.FileName = ffmpegPath;
+        process.StartInfo.UseShellExecute = false;
+        process.StartInfo.RedirectStandardError = true;
+        process.StartInfo.RedirectStandardOutput = true;
+        process.StartInfo.CreateNoWindow = true;
+        process.StartInfo.ArgumentList.Add("-hide_banner");
+        process.StartInfo.ArgumentList.Add("-i");
+        process.StartInfo.ArgumentList.Add(inputPath);
+
+        process.Start();
+
+        var standardErrorTask = process.StandardError.ReadToEndAsync(cancellationToken);
+        var standardOutputTask = process.StandardOutput.ReadToEndAsync(cancellationToken);
+        await process.WaitForExitAsync(cancellationToken);
+
+        return await standardErrorTask + await standardOutputTask;
+    }
+
+    private static string FormatSeconds(TimeSpan value)
+    {
+        return value.TotalSeconds.ToString("0.###", CultureInfo.InvariantCulture);
     }
 
     private static string NormalizeExtension(string? extension, string fallback)
@@ -206,6 +407,8 @@ public sealed class FfmpegRenderer
         }
     }
 }
+
+internal sealed record VideoRenderSize(int Width, int Height);
 
 public sealed class RenderProgressText
 {

@@ -42,20 +42,22 @@ public partial class MainWindow : Window
     private readonly LocalizationManager _localization = new();
     private readonly AppSettings _settings;
     private readonly List<string> _debugMessages = new();
+    private readonly List<CancellationTokenSource> _previewCancellations = new();
 
     private bool _isBusy;
     private bool _isClosing;
     private bool _isPlaying;
     private CancellationTokenSource? _framePreviewCancellation;
-    private CancellationTokenSource? _previewCancellation;
     private DebugLogWindow? _debugLogWindow;
+    private readonly Dictionary<string, TimeSpan> _sourceDurations = new(StringComparer.OrdinalIgnoreCase);
     private int _framePreviewRequestId;
     private string? _ffmpegPath;
+    private string? _activeSourcePath;
+    private string? _pendingAppendPath;
+    private TimeSpan? _pendingPlayerPosition;
     private int _selectedClipIndex = -1;
     private TimeSpan? _spacePlaybackStartPosition;
     private TimeSpan _currentTimelinePosition = TimeSpan.Zero;
-    private TimeSpan _sourceDuration = TimeSpan.Zero;
-    private string? _videoPath;
 
     public MainWindow()
     {
@@ -67,6 +69,7 @@ public partial class MainWindow : Window
         Timeline.SetPixelsPerSecond(TimelinePixelsPerSecond);
         Timeline.PositionRequested += Timeline_PositionRequested;
         Timeline.ClipSelected += Timeline_ClipSelected;
+        Timeline.ClipDragRequested += Timeline_ClipDragRequested;
 
         _positionTimer = new DispatcherTimer
         {
@@ -78,7 +81,11 @@ public partial class MainWindow : Window
         Closing += (_, _) => _isClosing = true;
         Closed += (_, _) =>
         {
-            _previewCancellation?.Cancel();
+            foreach (var previewCancellation in _previewCancellations.ToList())
+            {
+                previewCancellation.Cancel();
+            }
+
             _framePreviewCancellation?.Cancel();
             _debugLogWindow?.Close();
         };
@@ -112,15 +119,15 @@ public partial class MainWindow : Window
 
     private TimeSpan EditDuration => _clips.Count == 0 ? TimeSpan.Zero : _clips[^1].TimelineEnd;
 
-    private bool HasRenderableClips => _videoPath is not null && _clips.Count > 0;
+    private bool HasRenderableClips => _clips.Count > 0;
 
-    private bool CanCaptureCurrentFrame => _videoPath is not null && _clips.Count > 0 && EditDuration > TimeSpan.Zero && !_isBusy;
+    private bool CanCaptureCurrentFrame => _clips.Count > 0 && EditDuration > TimeSpan.Zero && !_isBusy;
 
     private bool CanUseStreamCopy
     {
         get
         {
-            var extension = _videoPath is null ? string.Empty : Path.GetExtension(_videoPath);
+            var extension = _clips.Count == 0 ? string.Empty : Path.GetExtension(_clips[0].SourcePath);
             return HasRenderableClips &&
                    StreamCopyExtensions.Contains(extension) &&
                    _clips.All(clip => clip.Duration >= MinimumClipDuration) &&
@@ -131,8 +138,15 @@ public partial class MainWindow : Window
     private bool IsStreamCopyTimelineSafe()
     {
         var expectedSourceStart = TimeSpan.Zero;
+        var sourcePath = _clips[0].SourcePath;
         foreach (var clip in _clips)
         {
+            if (!string.Equals(clip.SourcePath, sourcePath, StringComparison.OrdinalIgnoreCase) ||
+                clip.TransitionInDuration > StreamCopyTimeTolerance)
+            {
+                return false;
+            }
+
             if (!NearlyEqual(clip.Start, expectedSourceStart))
             {
                 return false;
@@ -183,9 +197,12 @@ public partial class MainWindow : Window
 
     private void UpdateWindowTitle()
     {
-        Title = string.IsNullOrWhiteSpace(_videoPath)
-            ? "OctoCut"
-            : $"{Path.GetFileName(_videoPath)} - OctoCut";
+        Title = _clips.Count switch
+        {
+            0 => "OctoCut",
+            1 => $"{Path.GetFileName(_clips[0].SourcePath)} - OctoCut",
+            _ => $"{_clips.Count} clips - OctoCut"
+        };
     }
 
     private void OpenVideo_Click(object sender, RoutedEventArgs e)
@@ -201,12 +218,11 @@ public partial class MainWindow : Window
             return;
         }
 
-        LoadVideo(dialog.FileName);
+        AppendVideo(dialog.FileName);
     }
 
-    private void LoadVideo(string path)
+    private void AppendVideo(string path)
     {
-        _previewCancellation?.Cancel();
         CancelViewportFrameRefresh();
         _isPlaying = false;
         _spacePlaybackStartPosition = null;
@@ -214,20 +230,9 @@ public partial class MainWindow : Window
         FramePreviewImage.Source = null;
         FramePreviewImage.Visibility = Visibility.Collapsed;
 
-        _videoPath = path;
-        _sourceDuration = TimeSpan.Zero;
-        _currentTimelinePosition = TimeSpan.Zero;
-        _selectedClipIndex = -1;
-        _clips.Clear();
-
-        Timeline.SetSourceDuration(TimeSpan.Zero);
-        Timeline.SetPreviewAssets(EmptyThumbnails, null);
-        Timeline.SetSelectedClipIndex(-1);
-        Timeline.SetCurrentPosition(TimeSpan.Zero);
-        UpdateTimelineExtent();
-
-        UpdateWindowTitle();
-        UpdatePositionText(TimeSpan.Zero);
+        _pendingAppendPath = path;
+        _pendingPlayerPosition = null;
+        _activeSourcePath = path;
         LogDebug(_localization.Text("Log.Video.Reading"));
 
         Player.Source = new Uri(path);
@@ -238,6 +243,36 @@ public partial class MainWindow : Window
 
     private void Player_MediaOpened(object sender, RoutedEventArgs e)
     {
+        if (_pendingAppendPath is not null && IsCurrentPlayerSource(_pendingAppendPath))
+        {
+            AppendPendingVideoFromPlayer();
+            return;
+        }
+
+        if (_pendingPlayerPosition.HasValue)
+        {
+            Player.Position = _pendingPlayerPosition.Value;
+            _pendingPlayerPosition = null;
+            if (_isPlaying)
+            {
+                Player.Play();
+            }
+            else
+            {
+                Player.Pause();
+            }
+        }
+    }
+
+    private void AppendPendingVideoFromPlayer()
+    {
+        var path = _pendingAppendPath;
+        _pendingAppendPath = null;
+        if (path is null)
+        {
+            return;
+        }
+
         if (!Player.NaturalDuration.HasTimeSpan)
         {
             LogDebug(_localization.Text("Log.Video.DurationFailed"));
@@ -245,14 +280,25 @@ public partial class MainWindow : Window
             return;
         }
 
-        _sourceDuration = Player.NaturalDuration.TimeSpan;
-        Timeline.SetSourceDuration(_sourceDuration);
-        ResetClips();
-        SelectClip(0);
-        SetCurrentTimelinePosition(TimeSpan.Zero, seekPlayer: true, keepVisible: true);
+        var sourceDuration = Player.NaturalDuration.TimeSpan;
+        _sourceDurations[path] = sourceDuration;
+
+        var clip = new ClipSegment(0, path, sourceDuration, TimeSpan.Zero, sourceDuration);
+        _clips.Add(clip);
+        RefreshClipTimeline();
+        var appendedIndex = _clips.Count - 1;
+        SelectClip(appendedIndex);
+        SetCurrentTimelinePosition(clip.TimelineStart, seekPlayer: true, keepVisible: true);
+        UpdateWindowTitle();
         LogDebug(_localization.Text("Log.Video.Opened"));
         UpdateCommandState();
-        _ = GenerateTimelinePreviewAsync();
+        _ = GenerateTimelinePreviewAsync(path, sourceDuration);
+    }
+
+    private bool IsCurrentPlayerSource(string path)
+    {
+        return Player.Source is not null &&
+               string.Equals(Player.Source.LocalPath, Path.GetFullPath(path), StringComparison.OrdinalIgnoreCase);
     }
 
     private void Player_MediaEnded(object sender, RoutedEventArgs e)
@@ -300,7 +346,7 @@ public partial class MainWindow : Window
 
     private void StartPlayback(bool rememberSpaceStart)
     {
-        if (_videoPath is null || EditDuration <= TimeSpan.Zero)
+        if (_clips.Count == 0 || EditDuration <= TimeSpan.Zero)
         {
             return;
         }
@@ -374,12 +420,12 @@ public partial class MainWindow : Window
             RemoveSelectedClip();
             e.Handled = true;
         }
-        else if (e.Key == Key.Left && _videoPath is not null)
+        else if (e.Key == Key.Left && _clips.Count > 0)
         {
             StepFrame(-1);
             e.Handled = true;
         }
-        else if (e.Key == Key.Right && _videoPath is not null)
+        else if (e.Key == Key.Right && _clips.Count > 0)
         {
             StepFrame(1);
             e.Handled = true;
@@ -408,6 +454,11 @@ public partial class MainWindow : Window
     private void Timeline_ClipSelected(object? sender, TimelineClipEventArgs e)
     {
         SelectClip(e.ClipIndex);
+    }
+
+    private void Timeline_ClipDragRequested(object? sender, TimelineClipDragEventArgs e)
+    {
+        MoveClipToRequestedStart(e.ClipIndex, e.RequestedStart);
     }
 
     private void TimelineScroll_SizeChanged(object sender, SizeChangedEventArgs e)
@@ -465,9 +516,9 @@ public partial class MainWindow : Window
         RefreshFfmpegStatus();
         UpdateCommandState();
 
-        if (_videoPath is not null && _sourceDuration > TimeSpan.Zero)
+        foreach (var clip in _clips)
         {
-            await GenerateTimelinePreviewAsync();
+            await GenerateTimelinePreviewAsync(clip.SourcePath, clip.SourceDuration);
         }
     }
 
@@ -484,13 +535,13 @@ public partial class MainWindow : Window
             return;
         }
 
-        var outputPath = SelectFrameOutputPath(captureRequest.Value.FrameNumber);
+        var outputPath = SelectFrameOutputPath(captureRequest.Value.SourcePath, captureRequest.Value.FrameNumber);
         if (outputPath is null)
         {
             return;
         }
 
-        await SaveCurrentFrameAsync(captureRequest.Value.SourcePosition, outputPath);
+        await SaveCurrentFrameAsync(captureRequest.Value.SourcePath, captureRequest.Value.SourcePosition, outputPath);
     }
 
     private void Shortcuts_Click(object sender, RoutedEventArgs e)
@@ -571,7 +622,7 @@ public partial class MainWindow : Window
         {
             var bitmap = await _framePreviewRenderer.CaptureFrameAsync(
                 ffmpegPath,
-                _videoPath!,
+                captureRequest.Value.SourcePath,
                 captureRequest.Value.SourcePosition,
                 CancellationToken.None);
 
@@ -589,7 +640,7 @@ public partial class MainWindow : Window
         }
     }
 
-    private async Task SaveCurrentFrameAsync(TimeSpan sourcePosition, string outputPath)
+    private async Task SaveCurrentFrameAsync(string sourcePath, TimeSpan sourcePosition, string outputPath)
     {
         var ffmpegPath = ResolveRequiredFfmpegPath();
         if (ffmpegPath is null)
@@ -603,7 +654,7 @@ public partial class MainWindow : Window
         {
             await _framePreviewRenderer.SaveFrameAsync(
                 ffmpegPath,
-                _videoPath!,
+                sourcePath,
                 sourcePosition,
                 outputPath,
                 CancellationToken.None);
@@ -622,7 +673,7 @@ public partial class MainWindow : Window
         }
     }
 
-    private (TimeSpan SourcePosition, long FrameNumber)? GetCurrentFrameCaptureRequest()
+    private (string SourcePath, TimeSpan SourcePosition, long FrameNumber)? GetCurrentFrameCaptureRequest()
     {
         if (!CanCaptureCurrentFrame)
         {
@@ -634,23 +685,20 @@ public partial class MainWindow : Window
             SyncTimelinePositionFromPlayer();
         }
 
+        var sourceLocation = SourceLocationFromTimeline(_currentTimelinePosition);
         return (
-            ClampSourcePreviewTime(SourcePositionFromTimeline(_currentTimelinePosition)),
+            sourceLocation.SourcePath,
+            ClampSourcePreviewTime(sourceLocation.SourcePath, sourceLocation.SourcePosition),
             FrameNumberFromTime(_currentTimelinePosition));
     }
 
-    private string? SelectFrameOutputPath(long frameNumber)
+    private string? SelectFrameOutputPath(string sourcePath, long frameNumber)
     {
-        if (_videoPath is null)
-        {
-            return null;
-        }
-
-        var sourceName = Path.GetFileNameWithoutExtension(_videoPath);
+        var sourceName = Path.GetFileNameWithoutExtension(sourcePath);
         var dialog = new SaveFileDialog
         {
             Title = _localization.Text("Dialog.FrameSave.Title"),
-            InitialDirectory = Path.GetDirectoryName(_videoPath),
+            InitialDirectory = Path.GetDirectoryName(sourcePath),
             FileName = $"{sourceName}_frame_{frameNumber:000000}.png",
             DefaultExt = ".png",
             AddExtension = true,
@@ -663,7 +711,7 @@ public partial class MainWindow : Window
 
     private void SplitAtCurrentTimelinePosition()
     {
-        if (_videoPath is null || EditDuration <= TimeSpan.Zero)
+        if (_clips.Count == 0 || EditDuration <= TimeSpan.Zero)
         {
             return;
         }
@@ -685,8 +733,12 @@ public partial class MainWindow : Window
         }
 
         _clips.RemoveAt(clipIndex);
-        _clips.Insert(clipIndex, new ClipSegment(0, sourcePosition, clip.End));
-        _clips.Insert(clipIndex, new ClipSegment(0, clip.Start, sourcePosition));
+        var transitionInDuration = clip.TransitionInDuration;
+        _clips.Insert(clipIndex, new ClipSegment(0, clip.SourcePath, clip.SourceDuration, sourcePosition, clip.End));
+        _clips.Insert(clipIndex, new ClipSegment(0, clip.SourcePath, clip.SourceDuration, clip.Start, sourcePosition)
+        {
+            TransitionInDuration = transitionInDuration
+        });
         RefreshClipTimeline();
         SelectClip(clipIndex);
         SetCurrentTimelinePosition(position, seekPlayer: true, keepVisible: true);
@@ -726,7 +778,7 @@ public partial class MainWindow : Window
 
     private void StepFrame(int direction)
     {
-        if (_videoPath is null || EditDuration <= TimeSpan.Zero)
+        if (_clips.Count == 0 || EditDuration <= TimeSpan.Zero)
         {
             return;
         }
@@ -741,9 +793,55 @@ public partial class MainWindow : Window
         UpdateCommandState();
     }
 
+    private void MoveClipToRequestedStart(int clipIndex, TimeSpan requestedStart)
+    {
+        if (clipIndex < 0 || clipIndex >= _clips.Count)
+        {
+            return;
+        }
+
+        var movingClip = _clips[clipIndex];
+        var remainingClips = _clips.Where((_, index) => index != clipIndex).ToList();
+        var newIndex = remainingClips.Count(clip => clip.TimelineStart <= requestedStart);
+
+        if (newIndex != clipIndex)
+        {
+            _clips.RemoveAt(clipIndex);
+            _clips.Insert(newIndex, movingClip);
+            ResetAllTransitions();
+            RefreshClipTimeline();
+            SelectClip(newIndex);
+            SetCurrentTimelinePosition(movingClip.TimelineStart, seekPlayer: true, keepVisible: true);
+            return;
+        }
+
+        if (clipIndex == 0)
+        {
+            movingClip.TransitionInDuration = TimeSpan.Zero;
+        }
+        else
+        {
+            var previousClip = _clips[clipIndex - 1];
+            var requestedOverlap = previousClip.TimelineEnd - requestedStart;
+            movingClip.TransitionInDuration = ClampTransitionDuration(previousClip, movingClip, requestedOverlap);
+        }
+
+        RefreshClipTimeline();
+        SelectClip(clipIndex);
+        SetCurrentTimelinePosition(movingClip.TimelineStart, seekPlayer: true, keepVisible: true);
+    }
+
+    private void ResetAllTransitions()
+    {
+        foreach (var clip in _clips)
+        {
+            clip.TransitionInDuration = TimeSpan.Zero;
+        }
+    }
+
     private async Task RenderAsync(RenderMode mode)
     {
-        if (_videoPath is null || _clips.Count == 0)
+        if (_clips.Count == 0)
         {
             return;
         }
@@ -761,7 +859,7 @@ public partial class MainWindow : Window
             return;
         }
 
-        if (string.Equals(Path.GetFullPath(outputPath), Path.GetFullPath(_videoPath), StringComparison.OrdinalIgnoreCase))
+        if (_clips.Any(clip => string.Equals(Path.GetFullPath(outputPath), Path.GetFullPath(clip.SourcePath), StringComparison.OrdinalIgnoreCase)))
         {
             MessageBox.Show(
                 this,
@@ -778,7 +876,6 @@ public partial class MainWindow : Window
             var progress = new Progress<string>(LogDebug);
             await _renderer.RenderAsync(
                 ffmpegPath,
-                _videoPath,
                 _clips.ToList(),
                 outputPath,
                 mode,
@@ -895,9 +992,9 @@ public partial class MainWindow : Window
             }
 
             LogDebug(_localization.Format("Log.Ffmpeg.Resolved", resolvedPath));
-            if (_videoPath is not null && _sourceDuration > TimeSpan.Zero)
+            foreach (var clip in _clips)
             {
-                await GenerateTimelinePreviewAsync();
+                await GenerateTimelinePreviewAsync(clip.SourcePath, clip.SourceDuration);
             }
         }
         catch (Exception ex)
@@ -911,9 +1008,9 @@ public partial class MainWindow : Window
         }
     }
 
-    private async Task GenerateTimelinePreviewAsync()
+    private async Task GenerateTimelinePreviewAsync(string sourcePath, TimeSpan sourceDuration)
     {
-        if (_videoPath is null || _sourceDuration <= TimeSpan.Zero)
+        if (sourceDuration <= TimeSpan.Zero)
         {
             return;
         }
@@ -925,22 +1022,21 @@ public partial class MainWindow : Window
             return;
         }
 
-        _previewCancellation?.Cancel();
         var cancellation = new CancellationTokenSource();
-        _previewCancellation = cancellation;
+        _previewCancellations.Add(cancellation);
 
         BusyProgress.Visibility = Visibility.Visible;
         LogDebug(_localization.Text("Log.Preview.Generating"));
 
         try
         {
-            var assets = await _previewGenerator.GenerateAsync(ffmpegPath, _videoPath, _sourceDuration, cancellation.Token);
+            var assets = await _previewGenerator.GenerateAsync(ffmpegPath, sourcePath, sourceDuration, cancellation.Token);
             if (cancellation.IsCancellationRequested)
             {
                 return;
             }
 
-            Timeline.SetPreviewAssets(assets.Thumbnails, assets.Waveform);
+            Timeline.SetPreviewAssets(sourcePath, assets.Thumbnails, assets.Waveform);
             LogDebug(_localization.Text("Log.Preview.Done"));
         }
         catch (Exception ex) when (ex is OperationCanceledException or TaskCanceledException)
@@ -949,14 +1045,16 @@ public partial class MainWindow : Window
         }
         catch
         {
-            Timeline.SetPreviewAssets(EmptyThumbnails, null);
+            Timeline.SetPreviewAssets(sourcePath, EmptyThumbnails, null);
             LogDebug(_localization.Text("Log.Preview.Failed"));
         }
         finally
         {
-            if (_previewCancellation == cancellation)
+            _previewCancellations.Remove(cancellation);
+            cancellation.Dispose();
+            if (!_isBusy && _previewCancellations.Count == 0)
             {
-                BusyProgress.Visibility = _isBusy ? Visibility.Visible : Visibility.Collapsed;
+                BusyProgress.Visibility = Visibility.Collapsed;
             }
         }
     }
@@ -997,19 +1095,20 @@ public partial class MainWindow : Window
 
     private string? SelectOutputPath(RenderMode mode)
     {
-        if (_videoPath is null)
+        if (_clips.Count == 0)
         {
             return null;
         }
 
-        var sourceExtension = NormalizeExtension(Path.GetExtension(_videoPath), ".mp4");
+        var firstSourcePath = _clips[0].SourcePath;
+        var sourceExtension = NormalizeExtension(Path.GetExtension(firstSourcePath), ".mp4");
         var defaultExtension = mode == RenderMode.StreamCopy ? sourceExtension : ".mp4";
-        var sourceName = Path.GetFileNameWithoutExtension(_videoPath);
+        var sourceName = Path.GetFileNameWithoutExtension(firstSourcePath);
 
         var dialog = new SaveFileDialog
         {
             Title = _localization.Text(mode == RenderMode.StreamCopy ? "Dialog.RenderSave.CopyTitle" : "Dialog.RenderSave.EncodeTitle"),
-            InitialDirectory = Path.GetDirectoryName(_videoPath),
+            InitialDirectory = Path.GetDirectoryName(firstSourcePath),
             FileName = $"{sourceName}_octocut{defaultExtension}",
             DefaultExt = defaultExtension,
             AddExtension = true,
@@ -1022,17 +1121,6 @@ public partial class MainWindow : Window
         return dialog.ShowDialog(this) == true ? dialog.FileName : null;
     }
 
-    private void ResetClips()
-    {
-        _clips.Clear();
-        if (_sourceDuration > TimeSpan.Zero)
-        {
-            _clips.Add(new ClipSegment(1, TimeSpan.Zero, _sourceDuration));
-        }
-
-        RefreshClipTimeline();
-    }
-
     private void RefreshClipTimeline()
     {
         var timelineStart = TimeSpan.Zero;
@@ -1040,17 +1128,43 @@ public partial class MainWindow : Window
         {
             var clip = _clips[index];
             clip.Index = index + 1;
+            if (index == 0)
+            {
+                clip.TransitionInDuration = TimeSpan.Zero;
+            }
+            else
+            {
+                var previousClip = _clips[index - 1];
+                clip.TransitionInDuration = ClampTransitionDuration(previousClip, clip, clip.TransitionInDuration);
+                timelineStart -= clip.TransitionInDuration;
+            }
+
             clip.SetTimelineStart(timelineStart);
             timelineStart += clip.Duration;
         }
 
+        UpdateWindowTitle();
         UpdateTimelineExtent();
         Timeline.InvalidateVisual();
     }
 
+    private static TimeSpan ClampTransitionDuration(ClipSegment previousClip, ClipSegment clip, TimeSpan requestedDuration)
+    {
+        if (requestedDuration <= TimeSpan.Zero)
+        {
+            return TimeSpan.Zero;
+        }
+
+        var maxTransition = TimeSpan.FromTicks(Math.Max(
+            0,
+            Math.Min(previousClip.Duration.Ticks, clip.Duration.Ticks) - MinimumClipDuration.Ticks));
+
+        return requestedDuration > maxTransition ? maxTransition : requestedDuration;
+    }
+
     private void RefreshPositionUi()
     {
-        if (_videoPath is null)
+        if (_clips.Count == 0)
         {
             return;
         }
@@ -1139,17 +1253,26 @@ public partial class MainWindow : Window
 
     private void SeekPlayerToCurrentTimelinePosition()
     {
-        if (_videoPath is null || _clips.Count == 0)
+        if (_clips.Count == 0)
         {
             return;
         }
 
-        Player.Position = SourcePositionFromTimeline(_currentTimelinePosition);
+        var sourceLocation = SourceLocationFromTimeline(_currentTimelinePosition);
+        if (!string.Equals(_activeSourcePath, sourceLocation.SourcePath, StringComparison.OrdinalIgnoreCase))
+        {
+            _activeSourcePath = sourceLocation.SourcePath;
+            _pendingPlayerPosition = sourceLocation.SourcePosition;
+            Player.Source = new Uri(sourceLocation.SourcePath);
+            return;
+        }
+
+        Player.Position = sourceLocation.SourcePosition;
     }
 
     private void RequestViewportFrameRefresh()
     {
-        if (_isPlaying || _videoPath is null || _clips.Count == 0)
+        if (_isPlaying || _clips.Count == 0)
         {
             return;
         }
@@ -1161,14 +1284,15 @@ public partial class MainWindow : Window
             return;
         }
 
-        var sourcePosition = ClampSourcePreviewTime(SourcePositionFromTimeline(_currentTimelinePosition));
+        var sourceLocation = SourceLocationFromTimeline(_currentTimelinePosition);
+        var sourcePosition = ClampSourcePreviewTime(sourceLocation.SourcePath, sourceLocation.SourcePosition);
         _framePreviewCancellation?.Cancel();
 
         var cancellation = new CancellationTokenSource();
         _framePreviewCancellation = cancellation;
         var requestId = ++_framePreviewRequestId;
 
-        _ = RenderViewportFrameAsync(requestId, ffmpegPath, _videoPath, sourcePosition, cancellation.Token);
+        _ = RenderViewportFrameAsync(requestId, ffmpegPath, sourceLocation.SourcePath, sourcePosition, cancellation.Token);
     }
 
     private async Task RenderViewportFrameAsync(
@@ -1208,44 +1332,46 @@ public partial class MainWindow : Window
         _framePreviewRequestId++;
     }
 
-    private TimeSpan ClampSourcePreviewTime(TimeSpan sourcePosition)
+    private TimeSpan ClampSourcePreviewTime(string sourcePath, TimeSpan sourcePosition)
     {
         if (sourcePosition < TimeSpan.Zero)
         {
             return TimeSpan.Zero;
         }
 
-        if (_sourceDuration <= TimeSpan.Zero)
+        if (!_sourceDurations.TryGetValue(sourcePath, out var sourceDuration) || sourceDuration <= TimeSpan.Zero)
         {
             return sourcePosition;
         }
 
-        var maxPosition = _sourceDuration > TimeSpan.FromMilliseconds(1)
-            ? _sourceDuration - TimeSpan.FromMilliseconds(1)
-            : _sourceDuration;
+        var maxPosition = sourceDuration > TimeSpan.FromMilliseconds(1)
+            ? sourceDuration - TimeSpan.FromMilliseconds(1)
+            : sourceDuration;
 
         return sourcePosition > maxPosition ? maxPosition : sourcePosition;
     }
 
-    private TimeSpan SourcePositionFromTimeline(TimeSpan timelinePosition)
+    private (string SourcePath, TimeSpan SourcePosition) SourceLocationFromTimeline(TimeSpan timelinePosition)
     {
         if (_clips.Count == 0)
         {
-            return TimeSpan.Zero;
+            return (string.Empty, TimeSpan.Zero);
         }
 
         var clipIndex = FindClipIndexAtTimeline(timelinePosition);
         if (clipIndex >= 0)
         {
-            return _clips[clipIndex].SourceFromTimeline(timelinePosition);
+            var clip = _clips[clipIndex];
+            return (clip.SourcePath, clip.SourceFromTimeline(timelinePosition));
         }
 
-        return timelinePosition >= EditDuration ? _clips[^1].End : _clips[0].Start;
+        var edgeClip = timelinePosition >= EditDuration ? _clips[^1] : _clips[0];
+        return (edgeClip.SourcePath, timelinePosition >= EditDuration ? edgeClip.End : edgeClip.Start);
     }
 
     private int FindClipIndexAtTimeline(TimeSpan timelinePosition)
     {
-        for (var index = 0; index < _clips.Count; index++)
+        for (var index = _clips.Count - 1; index >= 0; index--)
         {
             var clip = _clips[index];
             var isLast = index == _clips.Count - 1;
@@ -1354,13 +1480,13 @@ public partial class MainWindow : Window
     private void SetBusy(bool isBusy)
     {
         _isBusy = isBusy;
-        BusyProgress.Visibility = isBusy ? Visibility.Visible : Visibility.Collapsed;
+        BusyProgress.Visibility = isBusy || _previewCancellations.Count > 0 ? Visibility.Visible : Visibility.Collapsed;
         UpdateCommandState();
     }
 
     private void UpdateCommandState()
     {
-        var hasVideo = _videoPath is not null && EditDuration > TimeSpan.Zero;
+        var hasVideo = _clips.Count > 0 && EditDuration > TimeSpan.Zero;
         var canRender = hasVideo && _clips.Count > 0 && !_isBusy;
 
         PlayPauseButton.IsEnabled = hasVideo && !_isBusy;
