@@ -17,6 +17,7 @@ public partial class MainWindow : Window
 {
     private static readonly TimeSpan MinimumClipDuration = TimeSpan.FromMilliseconds(250);
     private static readonly TimeSpan FrameDuration = TimeSpan.FromSeconds(1d / 30d);
+    private static readonly TimeSpan StreamCopyTimeTolerance = TimeSpan.FromMilliseconds(1);
     private static readonly IReadOnlyList<TimelineThumbnail> EmptyThumbnails = Array.Empty<TimelineThumbnail>();
     private static readonly HashSet<string> StreamCopyExtensions = new(StringComparer.OrdinalIgnoreCase)
     {
@@ -122,8 +123,30 @@ public partial class MainWindow : Window
             var extension = _videoPath is null ? string.Empty : Path.GetExtension(_videoPath);
             return HasRenderableClips &&
                    StreamCopyExtensions.Contains(extension) &&
-                   _clips.All(clip => clip.Duration >= MinimumClipDuration);
+                   _clips.All(clip => clip.Duration >= MinimumClipDuration) &&
+                   IsStreamCopyTimelineSafe();
         }
+    }
+
+    private bool IsStreamCopyTimelineSafe()
+    {
+        var expectedSourceStart = TimeSpan.Zero;
+        foreach (var clip in _clips)
+        {
+            if (!NearlyEqual(clip.Start, expectedSourceStart))
+            {
+                return false;
+            }
+
+            expectedSourceStart = clip.End;
+        }
+
+        return true;
+    }
+
+    private static bool NearlyEqual(TimeSpan left, TimeSpan right)
+    {
+        return (left - right).Duration() <= StreamCopyTimeTolerance;
     }
 
     private void ApplyLocalization()

@@ -87,23 +87,32 @@ public sealed class FfmpegRenderer
         var duration = clip.Duration.TotalSeconds.ToString("0.###", System.Globalization.CultureInfo.InvariantCulture);
         var start = clip.Start.TotalSeconds.ToString("0.###", System.Globalization.CultureInfo.InvariantCulture);
 
-        var arguments = new List<string>
-        {
-            "-y",
-            "-ss", start,
-            "-i", inputPath,
-            "-t", duration,
-            "-map", "0:v:0?",
-            "-map", "0:a?",
-            "-sn"
-        };
+        var arguments = new List<string> { "-y" };
 
         if (mode == RenderMode.StreamCopy)
         {
+            arguments.AddRange(new[]
+            {
+                "-ss", start,
+                "-i", inputPath,
+                "-t", duration,
+                "-map", "0:v:0?",
+                "-map", "0:a?",
+                "-sn"
+            });
             arguments.AddRange(new[] { "-c", "copy", "-avoid_negative_ts", "make_zero" });
         }
         else
         {
+            arguments.AddRange(new[]
+            {
+                "-i", inputPath,
+                "-ss", start,
+                "-t", duration,
+                "-map", "0:v:0?",
+                "-map", "0:a?",
+                "-sn"
+            });
             arguments.AddRange(new[]
             {
                 "-c:v", "libx264",
