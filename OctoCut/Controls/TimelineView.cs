@@ -24,6 +24,13 @@ public sealed class TimelineClipDragEventArgs(int clipIndex, TimeSpan requestedS
     public TimeSpan RequestedStart { get; } = requestedStart;
 }
 
+public sealed class TimelineScaleEventArgs(int wheelDelta, TimeSpan anchorPosition) : EventArgs
+{
+    public int WheelDelta { get; } = wheelDelta;
+
+    public TimeSpan AnchorPosition { get; } = anchorPosition;
+}
+
 public sealed class TimelineThumbnail(TimeSpan sourceTime, BitmapSource image)
 {
     public TimeSpan SourceTime { get; } = sourceTime;
@@ -73,6 +80,8 @@ public sealed class TimelineView : FrameworkElement
 
     public event EventHandler<TimelineClipDragEventArgs>? ClipDragRequested;
 
+    public event EventHandler<TimelineScaleEventArgs>? ScaleRequested;
+
     public ObservableCollection<ClipSegment> Clips { get; set; }
 
     public TimeSpan CurrentPosition { get; private set; }
@@ -114,7 +123,7 @@ public sealed class TimelineView : FrameworkElement
 
     public void SetPixelsPerSecond(double pixelsPerSecond)
     {
-        _pixelsPerSecond = Math.Clamp(pixelsPerSecond, 12, 120);
+        _pixelsPerSecond = Math.Clamp(pixelsPerSecond, 12, 240);
         InvalidateVisual();
     }
 
@@ -232,6 +241,25 @@ public sealed class TimelineView : FrameworkElement
         _isDraggingClip = false;
         _dragClipIndex = -1;
         ReleaseMouseCapture();
+        e.Handled = true;
+    }
+
+    protected override void OnMouseWheel(MouseWheelEventArgs e)
+    {
+        base.OnMouseWheel(e);
+
+        if (Clips.Count == 0)
+        {
+            return;
+        }
+
+        var point = e.GetPosition(this);
+        if (point.Y < 0 || point.Y > RulerHeight)
+        {
+            return;
+        }
+
+        ScaleRequested?.Invoke(this, new TimelineScaleEventArgs(e.Delta, TimeFromX(point.X)));
         e.Handled = true;
     }
 

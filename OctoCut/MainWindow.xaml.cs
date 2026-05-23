@@ -33,7 +33,10 @@ public partial class MainWindow : Window
         ".webm"
     };
 
-    private const double TimelinePixelsPerSecond = 52;
+    private const double DefaultTimelinePixelsPerSecond = 52;
+    private const double MinimumTimelinePixelsPerSecond = 12;
+    private const double MaximumTimelinePixelsPerSecond = 240;
+    private const double TimelineScaleStep = 1.15;
     private const int PreviewFrameMaxWidth = 960;
     private const int PreviewFrameMaxHeight = 540;
 
@@ -61,6 +64,7 @@ public partial class MainWindow : Window
     private int _selectedClipIndex = -1;
     private TimeSpan? _spacePlaybackStartPosition;
     private TimeSpan _currentTimelinePosition = TimeSpan.Zero;
+    private double _timelinePixelsPerSecond = DefaultTimelinePixelsPerSecond;
 
     public MainWindow()
     {
@@ -69,10 +73,11 @@ public partial class MainWindow : Window
         _settings = SettingsStore.Load();
         InitializeLanguage();
         Timeline.SetClips(_clips);
-        Timeline.SetPixelsPerSecond(TimelinePixelsPerSecond);
+        Timeline.SetPixelsPerSecond(_timelinePixelsPerSecond);
         Timeline.PositionRequested += Timeline_PositionRequested;
         Timeline.ClipSelected += Timeline_ClipSelected;
         Timeline.ClipDragRequested += Timeline_ClipDragRequested;
+        Timeline.ScaleRequested += Timeline_ScaleRequested;
 
         _positionTimer = new DispatcherTimer
         {
@@ -493,6 +498,11 @@ public partial class MainWindow : Window
     private void Timeline_ClipDragRequested(object? sender, TimelineClipDragEventArgs e)
     {
         MoveClipToRequestedStart(e.ClipIndex, e.RequestedStart);
+    }
+
+    private void Timeline_ScaleRequested(object? sender, TimelineScaleEventArgs e)
+    {
+        AdjustTimelineScale(e.WheelDelta, e.AnchorPosition);
     }
 
     private void TimelineScroll_SizeChanged(object sender, SizeChangedEventArgs e)
@@ -1699,11 +1709,41 @@ public partial class MainWindow : Window
             viewportWidth = Math.Max(0, ActualWidth - 48);
         }
 
-        var timelineWidth = Math.Max(viewportWidth, Math.Max(1, EditDuration.TotalSeconds) * TimelinePixelsPerSecond);
+        var timelineWidth = Math.Max(viewportWidth, Math.Max(1, EditDuration.TotalSeconds) * _timelinePixelsPerSecond);
         Timeline.Width = timelineWidth;
-        Timeline.SetPixelsPerSecond(TimelinePixelsPerSecond);
+        Timeline.SetPixelsPerSecond(_timelinePixelsPerSecond);
         Timeline.InvalidateMeasure();
         Timeline.InvalidateVisual();
+    }
+
+    private void AdjustTimelineScale(int wheelDelta, TimeSpan anchorPosition)
+    {
+        if (wheelDelta == 0 || EditDuration <= TimeSpan.Zero)
+        {
+            return;
+        }
+
+        var oldPixelsPerSecond = _timelinePixelsPerSecond;
+        var factor = wheelDelta > 0 ? TimelineScaleStep : 1 / TimelineScaleStep;
+        var nextPixelsPerSecond = Math.Clamp(
+            oldPixelsPerSecond * factor,
+            MinimumTimelinePixelsPerSecond,
+            MaximumTimelinePixelsPerSecond);
+
+        if (Math.Abs(nextPixelsPerSecond - oldPixelsPerSecond) < 0.001)
+        {
+            return;
+        }
+
+        var anchorSeconds = Math.Clamp(anchorPosition.TotalSeconds, 0, Math.Max(0, EditDuration.TotalSeconds));
+        var anchorViewportX = anchorSeconds * oldPixelsPerSecond - TimelineScroll.HorizontalOffset;
+
+        _timelinePixelsPerSecond = nextPixelsPerSecond;
+        UpdateTimelineExtent();
+        TimelineScroll.UpdateLayout();
+
+        var nextOffset = anchorSeconds * nextPixelsPerSecond - anchorViewportX;
+        TimelineScroll.ScrollToHorizontalOffset(Math.Max(0, nextOffset));
     }
 
     private void EnsureTimelinePositionVisible()
@@ -1713,7 +1753,7 @@ public partial class MainWindow : Window
             return;
         }
 
-        var playheadX = _currentTimelinePosition.TotalSeconds * TimelinePixelsPerSecond;
+        var playheadX = _currentTimelinePosition.TotalSeconds * _timelinePixelsPerSecond;
         var left = TimelineScroll.HorizontalOffset;
         var right = left + TimelineScroll.ViewportWidth;
         const double padding = 48;
