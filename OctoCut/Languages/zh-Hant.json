@@ -63,6 +63,8 @@
     "Main.Button.RippleDelete.ToolTip": "波紋刪除：刪除產生的空隙會由後續片段向前填補。",
     "Main.Button.Split": "在目前位置分割",
     "Main.Button.Split.ToolTip": "在目前位置分割 (S)",
+    "Main.CheckBox.TransitionPreview": "預覽",
+    "Main.CheckBox.TransitionPreview.ToolTip": "在目前影格預覽中顯示溶解轉場狀態。",
     "Main.Menu.DebugLog": "顯示偵錯記錄",
     "Main.Menu.Exit": "結束(_X)",
     "Main.Menu.File": "檔案(_F)",

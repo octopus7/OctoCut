@@ -1,6 +1,8 @@
 using System.Diagnostics;
 using System.Globalization;
 using System.IO;
+using System.Windows;
+using System.Windows.Media;
 using System.Windows.Media.Imaging;
 
 namespace OctoCut.Services;
@@ -62,6 +64,22 @@ public sealed class FramePreviewRenderer
         {
             TryDeleteFile(outputPath);
         }
+    }
+
+    public async Task<BitmapSource> RenderTransitionFrameAsync(
+        string ffmpegPath,
+        string firstInputPath,
+        TimeSpan firstSourceTime,
+        string secondInputPath,
+        TimeSpan secondSourceTime,
+        double amount,
+        CancellationToken cancellationToken)
+    {
+        var firstFrameTask = RenderFrameAsync(ffmpegPath, firstInputPath, firstSourceTime, cancellationToken);
+        var secondFrameTask = RenderFrameAsync(ffmpegPath, secondInputPath, secondSourceTime, cancellationToken);
+
+        await Task.WhenAll(firstFrameTask, secondFrameTask);
+        return BlendFrames(firstFrameTask.Result, secondFrameTask.Result, amount);
     }
 
     public Task SaveFrameAsync(
@@ -131,6 +149,30 @@ public sealed class FramePreviewRenderer
         bitmap.CacheOption = BitmapCacheOption.OnLoad;
         bitmap.UriSource = new Uri(path);
         bitmap.EndInit();
+        bitmap.Freeze();
+        return bitmap;
+    }
+
+    private static BitmapSource BlendFrames(BitmapSource firstFrame, BitmapSource secondFrame, double amount)
+    {
+        var opacity = Math.Clamp(amount, 0, 1);
+        var width = Math.Max(1, firstFrame.PixelWidth);
+        var height = Math.Max(1, firstFrame.PixelHeight);
+        var dpiX = firstFrame.DpiX > 0 ? firstFrame.DpiX : 96;
+        var dpiY = firstFrame.DpiY > 0 ? firstFrame.DpiY : 96;
+        var rect = new Rect(0, 0, width, height);
+
+        var visual = new DrawingVisual();
+        using (var context = visual.RenderOpen())
+        {
+            context.DrawImage(firstFrame, rect);
+            context.PushOpacity(opacity);
+            context.DrawImage(secondFrame, rect);
+            context.Pop();
+        }
+
+        var bitmap = new RenderTargetBitmap(width, height, dpiX, dpiY, PixelFormats.Pbgra32);
+        bitmap.Render(visual);
         bitmap.Freeze();
         return bitmap;
     }

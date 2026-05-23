@@ -182,6 +182,8 @@ public partial class MainWindow : Window
 
         UpdateWindowTitle();
         OpenButton.Content = _localization.Text("Main.Button.OpenVideo");
+        TransitionPreviewCheckBox.Content = _localization.Text("Main.CheckBox.TransitionPreview");
+        TransitionPreviewCheckBox.ToolTip = _localization.Text("Main.CheckBox.TransitionPreview.ToolTip");
         SplitButton.Content = _localization.Text("Main.Button.Split");
         SplitButton.ToolTip = _localization.Text("Main.Button.Split.ToolTip");
         RemoveClipButton.Content = _localization.Text("Main.Button.Delete");
@@ -403,6 +405,14 @@ public partial class MainWindow : Window
     private void ClearClipTransition_Click(object sender, RoutedEventArgs e)
     {
         ClearSelectedClipTransitions();
+    }
+
+    private void TransitionPreviewCheckBox_Click(object sender, RoutedEventArgs e)
+    {
+        if (!_isPlaying)
+        {
+            RequestViewportFrameRefresh();
+        }
     }
 
     private void RippleDeleteToggle_Click(object sender, RoutedEventArgs e)
@@ -1359,14 +1369,32 @@ public partial class MainWindow : Window
             return;
         }
 
-        var sourceLocation = SourceLocationFromTimeline(_currentTimelinePosition);
-        var sourcePosition = ClampSourcePreviewTime(sourceLocation.SourcePath, sourceLocation.SourcePosition);
         _framePreviewCancellation?.Cancel();
 
         var cancellation = new CancellationTokenSource();
         _framePreviewCancellation = cancellation;
         var requestId = ++_framePreviewRequestId;
 
+        var transitionPreview = TransitionPreviewCheckBox.IsChecked == true
+            ? TransitionPreviewFromTimeline(_currentTimelinePosition)
+            : null;
+        if (transitionPreview is not null)
+        {
+            var preview = transitionPreview.Value;
+            _ = RenderViewportTransitionFrameAsync(
+                requestId,
+                ffmpegPath,
+                preview.FirstSourcePath,
+                preview.FirstSourcePosition,
+                preview.SecondSourcePath,
+                preview.SecondSourcePosition,
+                preview.Amount,
+                cancellation.Token);
+            return;
+        }
+
+        var sourceLocation = SourceLocationFromTimeline(_currentTimelinePosition);
+        var sourcePosition = ClampSourcePreviewTime(sourceLocation.SourcePath, sourceLocation.SourcePosition);
         _ = RenderViewportFrameAsync(requestId, ffmpegPath, sourceLocation.SourcePath, sourcePosition, cancellation.Token);
     }
 
@@ -1380,6 +1408,47 @@ public partial class MainWindow : Window
         try
         {
             var frame = await _framePreviewRenderer.RenderFrameAsync(ffmpegPath, videoPath, sourcePosition, cancellationToken);
+            if (cancellationToken.IsCancellationRequested || requestId != _framePreviewRequestId)
+            {
+                return;
+            }
+
+            FramePreviewImage.Source = frame;
+            FramePreviewImage.Visibility = Visibility.Visible;
+        }
+        catch (Exception ex) when (ex is OperationCanceledException or TaskCanceledException)
+        {
+            // A newer seek request superseded this frame.
+        }
+        catch
+        {
+            if (requestId == _framePreviewRequestId)
+            {
+                FramePreviewImage.Visibility = Visibility.Collapsed;
+            }
+        }
+    }
+
+    private async Task RenderViewportTransitionFrameAsync(
+        int requestId,
+        string ffmpegPath,
+        string firstVideoPath,
+        TimeSpan firstSourcePosition,
+        string secondVideoPath,
+        TimeSpan secondSourcePosition,
+        double amount,
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            var frame = await _framePreviewRenderer.RenderTransitionFrameAsync(
+                ffmpegPath,
+                firstVideoPath,
+                firstSourcePosition,
+                secondVideoPath,
+                secondSourcePosition,
+                amount,
+                cancellationToken);
             if (cancellationToken.IsCancellationRequested || requestId != _framePreviewRequestId)
             {
                 return;
@@ -1424,6 +1493,38 @@ public partial class MainWindow : Window
             : sourceDuration;
 
         return sourcePosition > maxPosition ? maxPosition : sourcePosition;
+    }
+
+    private (string FirstSourcePath, TimeSpan FirstSourcePosition, string SecondSourcePath, TimeSpan SecondSourcePosition, double Amount)?
+        TransitionPreviewFromTimeline(TimeSpan timelinePosition)
+    {
+        for (var index = 1; index < _clips.Count; index++)
+        {
+            var clip = _clips[index];
+            if (clip.TransitionInDuration <= TimeSpan.Zero)
+            {
+                continue;
+            }
+
+            var transitionStart = clip.TimelineStart;
+            var transitionEnd = transitionStart + clip.TransitionInDuration;
+            if (timelinePosition < transitionStart || timelinePosition > transitionEnd)
+            {
+                continue;
+            }
+
+            var previousClip = _clips[index - 1];
+            var elapsed = timelinePosition - transitionStart;
+            var amount = elapsed.TotalSeconds / clip.TransitionInDuration.TotalSeconds;
+            return (
+                previousClip.SourcePath,
+                ClampSourcePreviewTime(previousClip.SourcePath, previousClip.SourceFromTimeline(timelinePosition)),
+                clip.SourcePath,
+                ClampSourcePreviewTime(clip.SourcePath, clip.SourceFromTimeline(timelinePosition)),
+                Math.Clamp(amount, 0, 1));
+        }
+
+        return null;
     }
 
     private (string SourcePath, TimeSpan SourcePosition) SourceLocationFromTimeline(TimeSpan timelinePosition)
@@ -1567,6 +1668,7 @@ public partial class MainWindow : Window
         PlayPauseButton.IsEnabled = hasVideo && !_isBusy;
         PlayPauseButton.Content = _localization.Text(_isPlaying ? "Main.Button.Pause" : "Main.Button.Play");
         PlayPauseButton.ToolTip = _localization.Text(_isPlaying ? "Main.Button.Pause.ToolTip" : "Main.Button.Play.ToolTip");
+        TransitionPreviewCheckBox.IsEnabled = hasVideo && !_isBusy;
         SplitButton.IsEnabled = hasVideo && !_isBusy;
         RemoveClipButton.IsEnabled = _selectedClipIndex >= 0 && _selectedClipIndex < _clips.Count && !_isBusy;
         MoveClipEarlierButton.IsEnabled = _selectedClipIndex > 0 && !_isBusy;

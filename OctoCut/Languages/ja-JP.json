@@ -63,6 +63,8 @@
     "Main.Button.RippleDelete.ToolTip": "リップル削除: 削除で生じた空白を後続クリップを前へ詰めて埋めます。",
     "Main.Button.Split": "現在位置で分割",
     "Main.Button.Split.ToolTip": "現在位置で分割 (S)",
+    "Main.CheckBox.TransitionPreview": "プレビュー",
+    "Main.CheckBox.TransitionPreview.ToolTip": "現在フレームのプレビューにディゾルブの状態を反映します。",
     "Main.Menu.DebugLog": "デバッグログを表示",
     "Main.Menu.Exit": "終了(_X)",
     "Main.Menu.File": "ファイル(_F)",

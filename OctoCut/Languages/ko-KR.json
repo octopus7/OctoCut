@@ -63,6 +63,8 @@
     "Main.Button.RippleDelete.ToolTip": "잔물결 삭제: 삭제로 생긴 빈 구간을 뒤 클립이 앞으로 당겨 붙여 메웁니다.",
     "Main.Button.Split": "현재 위치 분할",
     "Main.Button.Split.ToolTip": "현재 위치 분할 (S)",
+    "Main.CheckBox.TransitionPreview": "미리보기",
+    "Main.CheckBox.TransitionPreview.ToolTip": "켜면 현재 프레임 미리보기에 디졸브 전환 상태를 반영합니다.",
     "Main.Menu.DebugLog": "디버그 로그 보기",
     "Main.Menu.Exit": "끝내기(_X)",
     "Main.Menu.File": "파일(_F)",

@@ -108,6 +108,13 @@
                         ToolTip="재생/일시정지 (Enter)"
                         Focusable="False"
                         Click="PlayPause_Click"/>
+                <CheckBox x:Name="TransitionPreviewCheckBox"
+                          Margin="4,0,0,0"
+                          VerticalAlignment="Center"
+                          Content="미리보기"
+                          IsChecked="True"
+                          Focusable="False"
+                          Click="TransitionPreviewCheckBox_Click"/>
             </StackPanel>
 
             <Border Grid.Row="2"

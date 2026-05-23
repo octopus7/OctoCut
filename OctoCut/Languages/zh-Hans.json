@@ -63,6 +63,8 @@
     "Main.Button.RippleDelete.ToolTip": "波纹删除：删除产生的空隙会由后续片段向前填补。",
     "Main.Button.Split": "在当前位置分割",
     "Main.Button.Split.ToolTip": "在当前位置分割 (S)",
+    "Main.CheckBox.TransitionPreview": "预览",
+    "Main.CheckBox.TransitionPreview.ToolTip": "在当前帧预览中显示溶解转场状态。",
     "Main.Menu.DebugLog": "显示调试日志",
     "Main.Menu.Exit": "退出(_X)",
     "Main.Menu.File": "文件(_F)",

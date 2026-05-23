@@ -63,6 +63,8 @@
     "Main.Button.RippleDelete.ToolTip": "Ripple delete: closes the gap by pulling later clips forward.",
     "Main.Button.Split": "Split Here",
     "Main.Button.Split.ToolTip": "Split at current position (S)",
+    "Main.CheckBox.TransitionPreview": "Preview",
+    "Main.CheckBox.TransitionPreview.ToolTip": "Show dissolve transition state in the current-frame preview.",
     "Main.Menu.DebugLog": "Show Debug Log",
     "Main.Menu.Exit": "E_xit",
     "Main.Menu.File": "_File",
