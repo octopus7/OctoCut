@@ -116,7 +116,7 @@
                     BorderThickness="1"
                     ClipToBounds="True">
                 <ScrollViewer x:Name="TimelineScroll"
-                              HorizontalScrollBarVisibility="Auto"
+                              HorizontalScrollBarVisibility="Visible"
                               VerticalScrollBarVisibility="Disabled"
                               SizeChanged="TimelineScroll_SizeChanged">
                     <controls:TimelineView x:Name="Timeline"
@@ -143,6 +143,18 @@
                         Content="선택 삭제"
                         Focusable="False"
                         Click="RemoveClip_Click"/>
+                <Button x:Name="MoveClipEarlierButton"
+                        Width="112"
+                        Margin="0,0,8,0"
+                        Content="앞으로 보내기"
+                        Focusable="False"
+                        Click="MoveClipEarlier_Click"/>
+                <Button x:Name="MoveClipLaterButton"
+                        Width="112"
+                        Margin="0,0,8,0"
+                        Content="뒤로 보내기"
+                        Focusable="False"
+                        Click="MoveClipLater_Click"/>
                 <ToggleButton x:Name="RippleDeleteToggle"
                               Width="32"
                               Height="28"

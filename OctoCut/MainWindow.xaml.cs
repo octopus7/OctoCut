@@ -185,6 +185,10 @@ public partial class MainWindow : Window
         SplitButton.Content = _localization.Text("Main.Button.Split");
         SplitButton.ToolTip = _localization.Text("Main.Button.Split.ToolTip");
         RemoveClipButton.Content = _localization.Text("Main.Button.Delete");
+        MoveClipEarlierButton.Content = _localization.Text("Main.Button.MoveEarlier");
+        MoveClipEarlierButton.ToolTip = _localization.Text("Main.Button.MoveEarlier.ToolTip");
+        MoveClipLaterButton.Content = _localization.Text("Main.Button.MoveLater");
+        MoveClipLaterButton.ToolTip = _localization.Text("Main.Button.MoveLater.ToolTip");
         RippleDeleteToggle.ToolTip = _localization.Text("Main.Button.RippleDelete.ToolTip");
         Timeline.EmptyTimelineText = _localization.Text("Timeline.Empty");
         Timeline.MissingThumbnailText = _localization.Text("Timeline.Thumbnail");
@@ -382,6 +386,16 @@ public partial class MainWindow : Window
     private void RemoveClip_Click(object sender, RoutedEventArgs e)
     {
         RemoveSelectedClip();
+    }
+
+    private void MoveClipEarlier_Click(object sender, RoutedEventArgs e)
+    {
+        MoveSelectedClipBy(-1);
+    }
+
+    private void MoveClipLater_Click(object sender, RoutedEventArgs e)
+    {
+        MoveSelectedClipBy(1);
     }
 
     private void RippleDeleteToggle_Click(object sender, RoutedEventArgs e)
@@ -801,20 +815,6 @@ public partial class MainWindow : Window
         }
 
         var movingClip = _clips[clipIndex];
-        var remainingClips = _clips.Where((_, index) => index != clipIndex).ToList();
-        var newIndex = remainingClips.Count(clip => clip.TimelineStart <= requestedStart);
-
-        if (newIndex != clipIndex)
-        {
-            _clips.RemoveAt(clipIndex);
-            _clips.Insert(newIndex, movingClip);
-            ResetAllTransitions();
-            RefreshClipTimeline();
-            SelectClip(newIndex);
-            SetCurrentTimelinePosition(movingClip.TimelineStart, seekPlayer: true, keepVisible: true);
-            return;
-        }
-
         if (clipIndex == 0)
         {
             movingClip.TransitionInDuration = TimeSpan.Zero;
@@ -829,6 +829,33 @@ public partial class MainWindow : Window
         RefreshClipTimeline();
         SelectClip(clipIndex);
         SetCurrentTimelinePosition(movingClip.TimelineStart, seekPlayer: true, keepVisible: true);
+    }
+
+    private void MoveSelectedClipBy(int direction)
+    {
+        if (_selectedClipIndex < 0 || _selectedClipIndex >= _clips.Count)
+        {
+            return;
+        }
+
+        var targetIndex = _selectedClipIndex + direction;
+        if (targetIndex < 0 || targetIndex >= _clips.Count)
+        {
+            return;
+        }
+
+        _isPlaying = false;
+        _spacePlaybackStartPosition = null;
+        Player.Pause();
+
+        var movingClip = _clips[_selectedClipIndex];
+        _clips.RemoveAt(_selectedClipIndex);
+        _clips.Insert(targetIndex, movingClip);
+        ResetAllTransitions();
+        RefreshClipTimeline();
+        SelectClip(targetIndex);
+        SetCurrentTimelinePosition(movingClip.TimelineStart, seekPlayer: true, keepVisible: true);
+        UpdateCommandState();
     }
 
     private void ResetAllTransitions()
@@ -1494,6 +1521,8 @@ public partial class MainWindow : Window
         PlayPauseButton.ToolTip = _localization.Text(_isPlaying ? "Main.Button.Pause.ToolTip" : "Main.Button.Play.ToolTip");
         SplitButton.IsEnabled = hasVideo && !_isBusy;
         RemoveClipButton.IsEnabled = _selectedClipIndex >= 0 && _selectedClipIndex < _clips.Count && !_isBusy;
+        MoveClipEarlierButton.IsEnabled = _selectedClipIndex > 0 && !_isBusy;
+        MoveClipLaterButton.IsEnabled = _selectedClipIndex >= 0 && _selectedClipIndex < _clips.Count - 1 && !_isBusy;
         SaveFrameMenuItem.IsEnabled = hasVideo && !_isBusy;
         RenderCopyMenuItem.IsEnabled = canRender && CanUseStreamCopy;
         RenderEncodeMenuItem.IsEnabled = canRender;
