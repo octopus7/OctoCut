@@ -48,6 +48,8 @@
     "Log.Video.Reading": "正在讀取影片資訊...",
     "Log.Winget.Failed": "winget 安裝失敗。",
     "Log.Winget.Installing": "正在透過 winget 安裝 FFmpeg...",
+    "Main.Button.ClearTransition": "清除轉場",
+    "Main.Button.ClearTransition.ToolTip": "移除所選片段前後的溶解轉場，並將片段無縫貼合。",
     "Main.Button.Delete": "刪除所選",
     "Main.Button.MoveEarlier": "前移",
     "Main.Button.MoveEarlier.ToolTip": "將所選片段在時間軸中向前移動一位。",

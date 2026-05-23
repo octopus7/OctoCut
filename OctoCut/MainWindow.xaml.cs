@@ -189,6 +189,8 @@ public partial class MainWindow : Window
         MoveClipEarlierButton.ToolTip = _localization.Text("Main.Button.MoveEarlier.ToolTip");
         MoveClipLaterButton.Content = _localization.Text("Main.Button.MoveLater");
         MoveClipLaterButton.ToolTip = _localization.Text("Main.Button.MoveLater.ToolTip");
+        ClearClipTransitionButton.Content = _localization.Text("Main.Button.ClearTransition");
+        ClearClipTransitionButton.ToolTip = _localization.Text("Main.Button.ClearTransition.ToolTip");
         RippleDeleteToggle.ToolTip = _localization.Text("Main.Button.RippleDelete.ToolTip");
         Timeline.EmptyTimelineText = _localization.Text("Timeline.Empty");
         Timeline.MissingThumbnailText = _localization.Text("Timeline.Thumbnail");
@@ -396,6 +398,11 @@ public partial class MainWindow : Window
     private void MoveClipLater_Click(object sender, RoutedEventArgs e)
     {
         MoveSelectedClipBy(1);
+    }
+
+    private void ClearClipTransition_Click(object sender, RoutedEventArgs e)
+    {
+        ClearSelectedClipTransitions();
     }
 
     private void RippleDeleteToggle_Click(object sender, RoutedEventArgs e)
@@ -829,6 +836,47 @@ public partial class MainWindow : Window
         RefreshClipTimeline();
         SelectClip(clipIndex);
         SetCurrentTimelinePosition(movingClip.TimelineStart, seekPlayer: true, keepVisible: true);
+    }
+
+    private void ClearSelectedClipTransitions()
+    {
+        if (!SelectedClipHasTransitions())
+        {
+            return;
+        }
+
+        _isPlaying = false;
+        _spacePlaybackStartPosition = null;
+        Player.Pause();
+
+        var selectedClip = _clips[_selectedClipIndex];
+        selectedClip.TransitionInDuration = TimeSpan.Zero;
+
+        if (_selectedClipIndex + 1 < _clips.Count)
+        {
+            _clips[_selectedClipIndex + 1].TransitionInDuration = TimeSpan.Zero;
+        }
+
+        RefreshClipTimeline();
+        SelectClip(_selectedClipIndex);
+        SetCurrentTimelinePosition(selectedClip.TimelineStart, seekPlayer: true, keepVisible: true);
+        UpdateCommandState();
+    }
+
+    private bool SelectedClipHasTransitions()
+    {
+        if (_selectedClipIndex < 0 || _selectedClipIndex >= _clips.Count)
+        {
+            return false;
+        }
+
+        if (_clips[_selectedClipIndex].TransitionInDuration > TimeSpan.Zero)
+        {
+            return true;
+        }
+
+        return _selectedClipIndex + 1 < _clips.Count &&
+               _clips[_selectedClipIndex + 1].TransitionInDuration > TimeSpan.Zero;
     }
 
     private void MoveSelectedClipBy(int direction)
@@ -1523,6 +1571,8 @@ public partial class MainWindow : Window
         RemoveClipButton.IsEnabled = _selectedClipIndex >= 0 && _selectedClipIndex < _clips.Count && !_isBusy;
         MoveClipEarlierButton.IsEnabled = _selectedClipIndex > 0 && !_isBusy;
         MoveClipLaterButton.IsEnabled = _selectedClipIndex >= 0 && _selectedClipIndex < _clips.Count - 1 && !_isBusy;
+        ClearClipTransitionButton.Visibility = SelectedClipHasTransitions() ? Visibility.Visible : Visibility.Collapsed;
+        ClearClipTransitionButton.IsEnabled = !_isBusy;
         SaveFrameMenuItem.IsEnabled = hasVideo && !_isBusy;
         RenderCopyMenuItem.IsEnabled = canRender && CanUseStreamCopy;
         RenderEncodeMenuItem.IsEnabled = canRender;

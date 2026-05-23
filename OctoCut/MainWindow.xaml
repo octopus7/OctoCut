@@ -155,6 +155,13 @@
                         Content="뒤로 보내기"
                         Focusable="False"
                         Click="MoveClipLater_Click"/>
+                <Button x:Name="ClearClipTransitionButton"
+                        Width="128"
+                        Margin="0,0,8,0"
+                        Content="Clear Transition"
+                        Focusable="False"
+                        Visibility="Collapsed"
+                        Click="ClearClipTransition_Click"/>
                 <ToggleButton x:Name="RippleDeleteToggle"
                               Width="32"
                               Height="28"

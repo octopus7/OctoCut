@@ -48,6 +48,8 @@
     "Log.Video.Reading": "영상 정보를 읽는 중...",
     "Log.Winget.Failed": "winget 설치 실패",
     "Log.Winget.Installing": "winget으로 FFmpeg 설치 중...",
+    "Main.Button.ClearTransition": "전환효과 해제",
+    "Main.Button.ClearTransition.ToolTip": "선택 클립 앞뒤의 디졸브 전환을 해제하고 빈틈 없이 붙입니다.",
     "Main.Button.Delete": "선택 삭제",
     "Main.Button.MoveEarlier": "앞으로 보내기",
     "Main.Button.MoveEarlier.ToolTip": "선택 클립을 타임라인에서 한 칸 앞으로 보냅니다.",

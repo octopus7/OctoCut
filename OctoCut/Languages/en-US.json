@@ -48,6 +48,8 @@
     "Log.Video.Reading": "Reading video information...",
     "Log.Winget.Failed": "winget installation failed.",
     "Log.Winget.Installing": "Installing FFmpeg with winget...",
+    "Main.Button.ClearTransition": "Clear Transition",
+    "Main.Button.ClearTransition.ToolTip": "Remove dissolve transitions before and after the selected clip and close the gap.",
     "Main.Button.Delete": "Delete Selection",
     "Main.Button.MoveEarlier": "Move Earlier",
     "Main.Button.MoveEarlier.ToolTip": "Move the selected clip one position earlier in the timeline.",

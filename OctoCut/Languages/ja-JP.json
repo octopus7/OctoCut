@@ -48,6 +48,8 @@
     "Log.Video.Reading": "動画情報を読み取り中...",
     "Log.Winget.Failed": "winget インストールに失敗しました。",
     "Log.Winget.Installing": "winget で FFmpeg をインストール中...",
+    "Main.Button.ClearTransition": "トランジション解除",
+    "Main.Button.ClearTransition.ToolTip": "選択クリップ前後のディゾルブを解除し、隙間なく詰めます。",
     "Main.Button.Delete": "選択を削除",
     "Main.Button.MoveEarlier": "前へ移動",
     "Main.Button.MoveEarlier.ToolTip": "選択クリップをタイムラインで 1 つ前へ移動します。",
