@@ -9,10 +9,43 @@ namespace OctoCut.Services;
 
 public sealed class FramePreviewRenderer
 {
+    private const int MaxCachedPreviewCount = 100;
+    private const long MaxCachedPreviewBytes = 256L * 1024 * 1024;
+
+    private readonly PreviewFrameCache _previewCache = new(MaxCachedPreviewCount, MaxCachedPreviewBytes);
+
     public async Task<BitmapSource> RenderFrameAsync(
         string ffmpegPath,
         string inputPath,
         TimeSpan sourceTime,
+        int maxPixelWidth,
+        int maxPixelHeight,
+        CancellationToken cancellationToken)
+    {
+        var previewSize = NormalizePreviewSize(maxPixelWidth, maxPixelHeight);
+        var cacheKey = PreviewCacheKey.Frame(inputPath, sourceTime, previewSize.Width, previewSize.Height);
+        if (_previewCache.TryGet(cacheKey, out var cachedFrame))
+        {
+            return cachedFrame;
+        }
+
+        var frame = await RenderFrameCoreAsync(
+            ffmpegPath,
+            inputPath,
+            sourceTime,
+            previewSize.Width,
+            previewSize.Height,
+            cancellationToken);
+        _previewCache.Set(cacheKey, frame);
+        return frame;
+    }
+
+    private async Task<BitmapSource> RenderFrameCoreAsync(
+        string ffmpegPath,
+        string inputPath,
+        TimeSpan sourceTime,
+        int maxPixelWidth,
+        int maxPixelHeight,
         CancellationToken cancellationToken)
     {
         var tempDirectory = Path.Combine(Path.GetTempPath(), "OctoCut", "frames");
@@ -27,9 +60,10 @@ public sealed class FramePreviewRenderer
                 new[]
                 {
                     "-y",
-                    "-ss", sourceTime.TotalSeconds.ToString("0.###", CultureInfo.InvariantCulture),
                     "-i", inputPath,
+                    "-ss", sourceTime.TotalSeconds.ToString("0.###", CultureInfo.InvariantCulture),
                     "-frames:v", "1",
+                    "-vf", $"scale={maxPixelWidth}:{maxPixelHeight}:force_original_aspect_ratio=decrease,pad={maxPixelWidth}:{maxPixelHeight}:(ow-iw)/2:(oh-ih)/2,setsar=1",
                     "-q:v", "2",
                     "-an",
                     outputPath
@@ -73,13 +107,44 @@ public sealed class FramePreviewRenderer
         string secondInputPath,
         TimeSpan secondSourceTime,
         double amount,
+        int maxPixelWidth,
+        int maxPixelHeight,
         CancellationToken cancellationToken)
     {
-        var firstFrameTask = RenderFrameAsync(ffmpegPath, firstInputPath, firstSourceTime, cancellationToken);
-        var secondFrameTask = RenderFrameAsync(ffmpegPath, secondInputPath, secondSourceTime, cancellationToken);
+        var previewSize = NormalizePreviewSize(maxPixelWidth, maxPixelHeight);
+        var normalizedAmount = Math.Clamp(amount, 0, 1);
+        var cacheKey = PreviewCacheKey.Transition(
+            firstInputPath,
+            firstSourceTime,
+            secondInputPath,
+            secondSourceTime,
+            normalizedAmount,
+            previewSize.Width,
+            previewSize.Height);
+        if (_previewCache.TryGet(cacheKey, out var cachedFrame))
+        {
+            return cachedFrame;
+        }
+
+        var firstFrameTask = RenderFrameCoreAsync(
+            ffmpegPath,
+            firstInputPath,
+            firstSourceTime,
+            previewSize.Width,
+            previewSize.Height,
+            cancellationToken);
+        var secondFrameTask = RenderFrameCoreAsync(
+            ffmpegPath,
+            secondInputPath,
+            secondSourceTime,
+            previewSize.Width,
+            previewSize.Height,
+            cancellationToken);
 
         await Task.WhenAll(firstFrameTask, secondFrameTask);
-        return BlendFrames(firstFrameTask.Result, secondFrameTask.Result, amount);
+        var frame = BlendFrames(firstFrameTask.Result, secondFrameTask.Result, normalizedAmount);
+        _previewCache.Set(cacheKey, frame);
+        return frame;
     }
 
     public Task SaveFrameAsync(
@@ -177,6 +242,15 @@ public sealed class FramePreviewRenderer
         return bitmap;
     }
 
+    private static (int Width, int Height) NormalizePreviewSize(int width, int height)
+    {
+        width = width <= 0 ? 960 : width;
+        height = height <= 0 ? 540 : height;
+        width = Math.Max(2, width / 2 * 2);
+        height = Math.Max(2, height / 2 * 2);
+        return (width, height);
+    }
+
     private static void TryKill(Process process)
     {
         try
@@ -207,3 +281,113 @@ public sealed class FramePreviewRenderer
         }
     }
 }
+
+internal static class PreviewCacheKey
+{
+    public static string Frame(string inputPath, TimeSpan sourceTime, int width, int height)
+    {
+        return string.Create(
+            CultureInfo.InvariantCulture,
+            $"frame|{NormalizePath(inputPath)}|{QuantizeTime(sourceTime)}|{width}x{height}");
+    }
+
+    public static string Transition(
+        string firstInputPath,
+        TimeSpan firstSourceTime,
+        string secondInputPath,
+        TimeSpan secondSourceTime,
+        double amount,
+        int width,
+        int height)
+    {
+        return string.Create(
+            CultureInfo.InvariantCulture,
+            $"transition|{NormalizePath(firstInputPath)}|{QuantizeTime(firstSourceTime)}|{NormalizePath(secondInputPath)}|{QuantizeTime(secondSourceTime)}|{QuantizeAmount(amount)}|{width}x{height}");
+    }
+
+    private static string NormalizePath(string path)
+    {
+        return Path.GetFullPath(path).ToUpperInvariant();
+    }
+
+    private static long QuantizeTime(TimeSpan time)
+    {
+        return (long)Math.Round(time.TotalMilliseconds, MidpointRounding.AwayFromZero);
+    }
+
+    private static int QuantizeAmount(double amount)
+    {
+        return (int)Math.Round(Math.Clamp(amount, 0, 1) * 10000, MidpointRounding.AwayFromZero);
+    }
+}
+
+internal sealed class PreviewFrameCache(int maxCount, long maxBytes)
+{
+    private readonly object _gate = new();
+    private readonly Dictionary<string, LinkedListNode<PreviewFrameCacheEntry>> _entries = new(StringComparer.Ordinal);
+    private readonly LinkedList<PreviewFrameCacheEntry> _lru = new();
+    private long _currentBytes;
+
+    public bool TryGet(string key, out BitmapSource frame)
+    {
+        lock (_gate)
+        {
+            if (!_entries.TryGetValue(key, out var node))
+            {
+                frame = null!;
+                return false;
+            }
+
+            _lru.Remove(node);
+            _lru.AddFirst(node);
+            frame = node.Value.Frame;
+            return true;
+        }
+    }
+
+    public void Set(string key, BitmapSource frame)
+    {
+        var bytes = EstimateBytes(frame);
+        lock (_gate)
+        {
+            if (_entries.TryGetValue(key, out var existingNode))
+            {
+                _currentBytes -= existingNode.Value.EstimatedBytes;
+                _lru.Remove(existingNode);
+                _entries.Remove(key);
+            }
+
+            var entry = new PreviewFrameCacheEntry(key, frame, bytes);
+            var node = new LinkedListNode<PreviewFrameCacheEntry>(entry);
+            _lru.AddFirst(node);
+            _entries[key] = node;
+            _currentBytes += bytes;
+            Trim();
+        }
+    }
+
+    private void Trim()
+    {
+        while (_entries.Count > maxCount || _currentBytes > maxBytes)
+        {
+            var last = _lru.Last;
+            if (last is null)
+            {
+                return;
+            }
+
+            _lru.RemoveLast();
+            _entries.Remove(last.Value.Key);
+            _currentBytes -= last.Value.EstimatedBytes;
+        }
+    }
+
+    private static long EstimateBytes(BitmapSource frame)
+    {
+        var bitsPerPixel = frame.Format.BitsPerPixel > 0 ? frame.Format.BitsPerPixel : 32;
+        var bytesPerPixel = Math.Max(4, (bitsPerPixel + 7) / 8);
+        return (long)Math.Max(1, frame.PixelWidth) * Math.Max(1, frame.PixelHeight) * bytesPerPixel;
+    }
+}
+
+internal sealed record PreviewFrameCacheEntry(string Key, BitmapSource Frame, long EstimatedBytes);

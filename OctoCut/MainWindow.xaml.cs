@@ -17,6 +17,7 @@ public partial class MainWindow : Window
 {
     private static readonly TimeSpan MinimumClipDuration = TimeSpan.FromMilliseconds(250);
     private static readonly TimeSpan FrameDuration = TimeSpan.FromSeconds(1d / 30d);
+    private static readonly TimeSpan TransitionPreviewEdgeTolerance = TimeSpan.FromTicks(FrameDuration.Ticks / 2);
     private static readonly TimeSpan StreamCopyTimeTolerance = TimeSpan.FromMilliseconds(1);
     private static readonly IReadOnlyList<TimelineThumbnail> EmptyThumbnails = Array.Empty<TimelineThumbnail>();
     private static readonly HashSet<string> StreamCopyExtensions = new(StringComparer.OrdinalIgnoreCase)
@@ -33,6 +34,8 @@ public partial class MainWindow : Window
     };
 
     private const double TimelinePixelsPerSecond = 52;
+    private const int PreviewFrameMaxWidth = 960;
+    private const int PreviewFrameMaxHeight = 540;
 
     private readonly ObservableCollection<ClipSegment> _clips = new();
     private readonly DispatcherTimer _positionTimer;
@@ -1374,6 +1377,7 @@ public partial class MainWindow : Window
         var cancellation = new CancellationTokenSource();
         _framePreviewCancellation = cancellation;
         var requestId = ++_framePreviewRequestId;
+        var previewSize = GetViewportPreviewSize();
 
         var transitionPreview = TransitionPreviewCheckBox.IsChecked == true
             ? TransitionPreviewFromTimeline(_currentTimelinePosition)
@@ -1389,13 +1393,22 @@ public partial class MainWindow : Window
                 preview.SecondSourcePath,
                 preview.SecondSourcePosition,
                 preview.Amount,
+                previewSize.Width,
+                previewSize.Height,
                 cancellation.Token);
             return;
         }
 
         var sourceLocation = SourceLocationFromTimeline(_currentTimelinePosition);
         var sourcePosition = ClampSourcePreviewTime(sourceLocation.SourcePath, sourceLocation.SourcePosition);
-        _ = RenderViewportFrameAsync(requestId, ffmpegPath, sourceLocation.SourcePath, sourcePosition, cancellation.Token);
+        _ = RenderViewportFrameAsync(
+            requestId,
+            ffmpegPath,
+            sourceLocation.SourcePath,
+            sourcePosition,
+            previewSize.Width,
+            previewSize.Height,
+            cancellation.Token);
     }
 
     private async Task RenderViewportFrameAsync(
@@ -1403,12 +1416,26 @@ public partial class MainWindow : Window
         string ffmpegPath,
         string videoPath,
         TimeSpan sourcePosition,
+        int maxPixelWidth,
+        int maxPixelHeight,
         CancellationToken cancellationToken)
     {
         try
         {
-            var frame = await _framePreviewRenderer.RenderFrameAsync(ffmpegPath, videoPath, sourcePosition, cancellationToken);
+            var frame = await _framePreviewRenderer.RenderFrameAsync(
+                ffmpegPath,
+                videoPath,
+                sourcePosition,
+                maxPixelWidth,
+                maxPixelHeight,
+                cancellationToken);
             if (cancellationToken.IsCancellationRequested || requestId != _framePreviewRequestId)
+            {
+                return;
+            }
+
+            if (TransitionPreviewCheckBox.IsChecked == true &&
+                TransitionPreviewFromTimeline(_currentTimelinePosition) is not null)
             {
                 return;
             }
@@ -1424,7 +1451,10 @@ public partial class MainWindow : Window
         {
             if (requestId == _framePreviewRequestId)
             {
-                FramePreviewImage.Visibility = Visibility.Collapsed;
+                if (FramePreviewImage.Source is null)
+                {
+                    FramePreviewImage.Visibility = Visibility.Collapsed;
+                }
             }
         }
     }
@@ -1437,6 +1467,8 @@ public partial class MainWindow : Window
         string secondVideoPath,
         TimeSpan secondSourcePosition,
         double amount,
+        int maxPixelWidth,
+        int maxPixelHeight,
         CancellationToken cancellationToken)
     {
         try
@@ -1448,8 +1480,16 @@ public partial class MainWindow : Window
                 secondVideoPath,
                 secondSourcePosition,
                 amount,
+                maxPixelWidth,
+                maxPixelHeight,
                 cancellationToken);
             if (cancellationToken.IsCancellationRequested || requestId != _framePreviewRequestId)
+            {
+                return;
+            }
+
+            if (TransitionPreviewCheckBox.IsChecked != true ||
+                TransitionPreviewFromTimeline(_currentTimelinePosition) is null)
             {
                 return;
             }
@@ -1465,7 +1505,10 @@ public partial class MainWindow : Window
         {
             if (requestId == _framePreviewRequestId)
             {
-                FramePreviewImage.Visibility = Visibility.Collapsed;
+                if (FramePreviewImage.Source is null)
+                {
+                    FramePreviewImage.Visibility = Visibility.Collapsed;
+                }
             }
         }
     }
@@ -1474,6 +1517,33 @@ public partial class MainWindow : Window
     {
         _framePreviewCancellation?.Cancel();
         _framePreviewRequestId++;
+    }
+
+    private (int Width, int Height) GetViewportPreviewSize()
+    {
+        var width = Player.ActualWidth;
+        var height = Player.ActualHeight;
+
+        if (double.IsNaN(width) || width <= 0)
+        {
+            width = PreviewFrameMaxWidth;
+        }
+
+        if (double.IsNaN(height) || height <= 0)
+        {
+            height = PreviewFrameMaxHeight;
+        }
+
+        var scale = Math.Min(PreviewFrameMaxWidth / width, PreviewFrameMaxHeight / height);
+        if (scale < 1)
+        {
+            width *= scale;
+            height *= scale;
+        }
+
+        var pixelWidth = Math.Max(2, (int)Math.Round(width));
+        var pixelHeight = Math.Max(2, (int)Math.Round(height));
+        return (pixelWidth / 2 * 2, pixelHeight / 2 * 2);
     }
 
     private TimeSpan ClampSourcePreviewTime(string sourcePath, TimeSpan sourcePosition)
@@ -1508,19 +1578,30 @@ public partial class MainWindow : Window
 
             var transitionStart = clip.TimelineStart;
             var transitionEnd = transitionStart + clip.TransitionInDuration;
-            if (timelinePosition < transitionStart || timelinePosition > transitionEnd)
+            if (timelinePosition < transitionStart - TransitionPreviewEdgeTolerance ||
+                timelinePosition > transitionEnd + TransitionPreviewEdgeTolerance)
             {
                 continue;
             }
 
             var previousClip = _clips[index - 1];
-            var elapsed = timelinePosition - transitionStart;
+            var previewPosition = timelinePosition;
+            if (previewPosition < transitionStart)
+            {
+                previewPosition = transitionStart;
+            }
+            else if (previewPosition > transitionEnd)
+            {
+                previewPosition = transitionEnd;
+            }
+
+            var elapsed = previewPosition - transitionStart;
             var amount = elapsed.TotalSeconds / clip.TransitionInDuration.TotalSeconds;
             return (
                 previousClip.SourcePath,
-                ClampSourcePreviewTime(previousClip.SourcePath, previousClip.SourceFromTimeline(timelinePosition)),
+                ClampSourcePreviewTime(previousClip.SourcePath, previousClip.SourceFromTimeline(previewPosition)),
                 clip.SourcePath,
-                ClampSourcePreviewTime(clip.SourcePath, clip.SourceFromTimeline(timelinePosition)),
+                ClampSourcePreviewTime(clip.SourcePath, clip.SourceFromTimeline(previewPosition)),
                 Math.Clamp(amount, 0, 1));
         }
 
