@@ -31,8 +31,8 @@ public sealed class FfmpegRenderer
             var outputExtension = NormalizeExtension(Path.GetExtension(outputPath), ".mp4");
             var needsTransitionRender = mode == RenderMode.Encode && HasTransitions(clips);
             var needsNormalizedEncode = mode == RenderMode.Encode;
-            var renderSize = needsNormalizedEncode
-                ? await ProbeVideoSizeAsync(ffmpegPath, clips[0].SourcePath, cancellationToken)
+            var renderProfile = needsNormalizedEncode
+                ? await ProbeVideoRenderProfileAsync(ffmpegPath, clips[0].SourcePath, cancellationToken)
                 : null;
             var segmentPaths = new List<string>();
 
@@ -51,7 +51,7 @@ public sealed class FfmpegRenderer
                     segmentPath,
                     clip,
                     mode,
-                    renderSize,
+                    renderProfile,
                     useSilentAudio,
                     cancellationToken);
 
@@ -99,7 +99,7 @@ public sealed class FfmpegRenderer
         string segmentPath,
         ClipSegment clip,
         RenderMode mode,
-        VideoRenderSize? renderSize,
+        VideoRenderProfile? renderProfile,
         bool useSilentAudio,
         CancellationToken cancellationToken)
     {
@@ -145,12 +145,12 @@ public sealed class FfmpegRenderer
                 ? new[] { "-map", "1:a:0" }
                 : new[] { "-map", "0:a:0?" });
 
-            if (renderSize is not null)
+            if (renderProfile is not null)
             {
                 arguments.AddRange(new[]
                 {
                     "-vf",
-                    $"scale={renderSize.Width}:{renderSize.Height}:force_original_aspect_ratio=decrease,pad={renderSize.Width}:{renderSize.Height}:(ow-iw)/2:(oh-ih)/2,setsar=1,fps=30,format=yuv420p"
+                    $"scale={renderProfile.Width}:{renderProfile.Height}:force_original_aspect_ratio=decrease,pad={renderProfile.Width}:{renderProfile.Height}:(ow-iw)/2:(oh-ih)/2,setsar=1,fps={renderProfile.FrameRate},format=yuv420p"
                 });
             }
 
@@ -320,7 +320,7 @@ public sealed class FfmpegRenderer
         return output.Contains("Audio:", StringComparison.OrdinalIgnoreCase);
     }
 
-    private static async Task<VideoRenderSize?> ProbeVideoSizeAsync(
+    private static async Task<VideoRenderProfile?> ProbeVideoRenderProfileAsync(
         string ffmpegPath,
         string inputPath,
         CancellationToken cancellationToken)
@@ -336,7 +336,7 @@ public sealed class FfmpegRenderer
         var height = int.Parse(match.Groups["height"].Value, CultureInfo.InvariantCulture);
         width = Math.Max(2, width / 2 * 2);
         height = Math.Max(2, height / 2 * 2);
-        return new VideoRenderSize(width, height);
+        return new VideoRenderProfile(width, height, ProbeVideoFrameRate(output));
     }
 
     private static async Task<string> RunFfmpegProbeAsync(
@@ -366,6 +366,24 @@ public sealed class FfmpegRenderer
     private static string FormatSeconds(TimeSpan value)
     {
         return value.TotalSeconds.ToString("0.###", CultureInfo.InvariantCulture);
+    }
+
+    private static string ProbeVideoFrameRate(string probeOutput)
+    {
+        var match = Regex.Match(probeOutput, @"(?<fps>\d+(?:\.\d+)?)\s*fps", RegexOptions.IgnoreCase);
+        if (!match.Success)
+        {
+            match = Regex.Match(probeOutput, @"(?<fps>\d+(?:\.\d+)?)\s*tbr", RegexOptions.IgnoreCase);
+        }
+
+        if (!match.Success ||
+            !double.TryParse(match.Groups["fps"].Value, NumberStyles.Float, CultureInfo.InvariantCulture, out var frameRate) ||
+            frameRate <= 0)
+        {
+            return "30";
+        }
+
+        return frameRate.ToString("0.###", CultureInfo.InvariantCulture);
     }
 
     private static string NormalizeExtension(string? extension, string fallback)
@@ -408,7 +426,7 @@ public sealed class FfmpegRenderer
     }
 }
 
-internal sealed record VideoRenderSize(int Width, int Height);
+internal sealed record VideoRenderProfile(int Width, int Height, string FrameRate);
 
 public sealed class RenderProgressText
 {
